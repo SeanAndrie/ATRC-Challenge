@@ -1,0 +1,42 @@
+[project]
+name = "atrc-challenge"
+version = "0.1.0"
+description = "ATRC Challenge: flight-change to hotel-demand scenario simulator for Abu Dhabi"
+readme = "README.md"
+authors = [
+    { name = "SeanAndrie", email = "seanandriegadingan@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    # Notebook runtime
+    "marimo>=0.25,<0.26",
+    "numpy>=2.5,<3",
+    # Reading the SCAD Key Transport Statistics workbook
+    "openpyxl>=3.1,<4",
+    "pandas>=3.0,<4",
+    "pdfplumber>=0.11.10",
+    "plotly>=7.1,<8",
+    "pyarrow>=25,<26",
+    # OpenSky historical flight database (Trino)
+    "pyopensky>=2.17,<3",
+    "requests>=2.34.2",
+    "sqlalchemy>=2.1,<3",
+    # DataFrame.to_markdown in the notebook
+    "tabulate>=0.9,<1",
+    "trino>=0.340,<1",
+]
+
+[project.scripts]
+atrc-challenge = "atrc_challenge:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# This is an analysis/notebook project, not an installable library: there is no
+# src/atrc_challenge package to build. Marking it non-package stops `uv lock`
+# and `uv sync` from failing on the absent build target, while leaving the
+# [project.scripts] entry point above in place for the CLI when it is written.
+package = false

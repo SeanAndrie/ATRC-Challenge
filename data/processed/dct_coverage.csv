@@ -1,0 +1,100 @@
+source_file,route,year,period,basis,kpi_rows,nationality_rows,supply_rows
+2015-01,main,2015,01,month title,11,11,0
+2015-02,duplicate,2018,2018-02,"byte-identical copies of a 2017-02 report cached under ['2015-02', '2018-02']",0,0,0
+2015-03,main,2015,03,month title,22,11,0
+2015-04,main,2015,04,month title,22,11,0
+2015-05,main,2015,05,month title,22,11,0
+2015-06,main,2015,06,month title,22,11,0
+2015-07,main,2015,07,month title,22,9,0
+2015-08,main,2015,08,month title,22,11,0
+2015-09,main,2015,09,month title,22,12,0
+2015-10,main,2015,10,month title,22,19,0
+2015-11,main,2015,11,month title,22,19,0
+2015-12,main,2015,12,month title,22,20,0
+2016-01,main,2016,01,month title,10,11,0
+2016-02,main,2016,02,month title,22,11,0
+2016-03,main,2016,03,month title,22,11,0
+2016-04,main,2016,04,month title,22,11,0
+2016-05,main,2016,05,month title,22,11,0
+2016-06,main,2016,06,month title,22,12,0
+2016-07,main,2016,07,indicator-table-year,22,12,0
+2016-08,main,2016,08,indicator-table-year,22,11,0
+2016-09,main,2016,09,month title,22,20,0
+2016-10,main,2016,10,month title,22,0,0
+2016-11,main,2016,11,month title,22,11,0
+2016-12,main,2016,12,month title,22,0,0
+2017-01,era2017,2017,01,month title,2,0,1
+2017-02,era2017,2017,02,month title,5,6,1
+2017-03,era2017,2017,03,month title,5,6,1
+2017-04,era2017,2017,04,month title,5,6,1
+2017-05,era2017,2017,05,month title,5,1,1
+2017-06,era2017,2017,06,month title,5,3,1
+2017-07,era2017,2017,07,month title,5,1,1
+2017-08,era2017,2017,08,month title,5,4,1
+2017-09,era2017,2017,09,month title,5,4,1
+2017-10,era2017,2017,10,month title,5,8,1
+2017-11,chart,2017,11,month title,2,0,1
+2017-12,chart,2017,12,month title,2,0,1
+2018-01,chart,2018,01,month title,6,3,1
+2018-02,duplicate,2018,2018-02,"byte-identical copies of a 2017-02 report cached under ['2015-02', '2018-02']",0,0,0
+2018-03,chart,2018,03,month title,6,0,1
+2018-04,chart,2018,04,month title,6,4,1
+2018-05,chart,2018,05,month title,6,4,1
+2018-06,chart,2018,06,month title,6,4,1
+2018-07,chart,2018,07,month title,6,7,1
+2018-08,chart,2018,08,month title,6,0,1
+2018-09,chart,2018,09,month title,6,6,1
+2018-10,chart,2018,10,month title,6,3,1
+2018-11,chart,2018,11,month title,6,4,1
+2018-12,chart,2018,12,month title,6,3,1
+2019-Q1,quarter,2019,Q1,quarter title,21,0,2
+2019-Q2,quarter,2019,Q2,quarter title,21,1,2
+2019-Q3,quarter,2019,Q3,quarter title,20,1,2
+2019-Q4,quarter,2019,Q4,quarter title,20,1,1
+2020-01,chart,2020,01,month title,6,0,8
+2020-02,chart,2020,02,month title,6,0,8
+2020-03,chart,2020,03,month title,6,0,8
+2020-04,chart,2020,04,month title,6,0,4
+2020-05,chart,2020,05,month title,6,0,4
+2020-06,chart,2020,06,month title,6,0,4
+2020-07,chart,2020,07,month title,6,0,5
+2020-08,chart,2020,08,month title,6,0,6
+2020-09,chart,2020,09,month title,6,0,5
+2020-10,chart,2020,10,month title,6,0,4
+2020-11,chart,2020,11,month title,6,0,4
+2020-12,chart,2020,12,chart-year-labels,6,0,4
+2021-01,chart,2021,01,month title,6,0,8
+2021-02,chart,2021,02,month title,6,0,8
+2021-03,chart,2021,03,month title,5,0,4
+2021-04,key,2021,04,month title,12,0,0
+2021-05,key,2021,05,month title,12,12,0
+2021-06,key,2021,06,month title,12,0,0
+2021-07,key,2021,07,month title,12,0,0
+2021-08,key,2021,08,month title,12,9,0
+2021-09,key,2021,09,month title,12,11,0
+2021-10,key,2021,10,month title,12,12,0
+2021-11,key,2021,11,month title,12,12,0
+2021-12,key,2021,12,month title,6,6,0
+2022-01,key,2022,01,month title,6,6,0
+2022-02,key,2022,02,month title,12,13,0
+2022-03,key,2022,03,month title,12,13,0
+2022-04,key,2022,04,chart-year-labels,12,12,0
+2022-05,key,2022,05,chart-year-labels,12,12,0
+2022-06,key,2022,06,chart-year-labels,12,0,0
+2022-07,key,2022,07,chart-year-labels,12,0,0
+2022-08,key,2022,08,chart-year-labels,12,15,0
+2022-09,key,2022,09,chart-year-labels,12,16,0
+2022-10,key,2022,10,chart-year-labels,12,16,0
+2022-11,key,2022,11,chart-year-labels,12,15,0
+2022-12,key,2022,12,chart-year-labels,12,17,0
+2023-01,key,2023,01,month title,6,7,0
+2023-02,key,2023,02,month title,12,16,0
+2023-03,key,2023,03,month title,12,13,0
+2023-04,key,2023,04,month title,12,12,0
+2023-05,key,2023,05,month title,12,13,0
+2023-06,key,2023,06,month title,12,14,0
+2023-07,key,2023,07,month title,12,12,0
+2023-08,key,2023,08,month title,12,14,0
+2023-09,key,2023,09,month title,12,0,0
+2023-10,key,2023,10,month title,12,14,0
+2024-annual-2024,annual2024,2024,annual,chart-year-labels,86,6,1

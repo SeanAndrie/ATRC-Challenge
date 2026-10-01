@@ -1,0 +1,42 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# OpenSky API Credentials
+credentials.json
+
+# marimo session cache. Regenerable; per-notebook run state, not source.
+notebooks/__marimo__/
+
+# Data tiers.
+#
+# data/raw/ is downloaded, immutable, and ~310 MB (99 DCT PDFs, 12 ADS-B
+# snapshot days, OurAirports). It is deliberately not tracked: every file in it
+# has a recorded source URL and is reproducible via pipeline/dct/download_dct.py
+# and pipeline/dct/fetch_dct_manifest.py. The ignore is anchored with a leading
+# slash on purpose -- a bare `data/` also matches any directory named data at
+# any depth, which silently hid notebooks/data/ for the life of the repo.
+#
+# data/interim/ and data/processed/ ARE tracked, ~4 MB combined, so a clean
+# clone can reproduce every published number without re-downloading anything.
+/data/raw/
+
+# Generated findings. Regenerate with:
+#   .venv/bin/python pipeline/tests/test_market_link.py
+#   .venv/bin/python pipeline/tests/test_aggregate_link.py
+#   .venv/bin/python pipeline/tests/test_retarget_international.py
+docs/market_link_test.md
+docs/aggregate_link_test.md
+docs/retarget_test.md
+
+# Submission artifacts are built for release, not committed:
+#   charts, the 10-page PDF, the 1-2 minute video.
+/outputs/*
+!/outputs/.gitkeep
