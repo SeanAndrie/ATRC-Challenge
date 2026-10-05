@@ -57,6 +57,17 @@ OPENSKY_TRINO = RAW / "opensky_trino"
 REFERENCE = RAW / "reference"
 OURAIRPORTS = REFERENCE / "ourairports_airports.csv"
 
+# Competition data pack (DCT Abu Dhabi challenge). Licensed for use within that
+# competition only, so it stays under data/raw and is never committed; its
+# expected files, sizes and checksums are recorded in docs/METHODS.md §2.
+COMPETITION = RAW / "competition"
+COMPETITION_FLIGHT = COMPETITION / "flight_data.xlsx"
+COMPETITION_INTL_TRAIN = COMPETITION / "data international_train.xlsx"
+COMPETITION_INTL_TEST = COMPETITION / "data international_test.xlsx"
+COMPETITION_DOM_TRAIN = COMPETITION / "data domestic_train.xlsx"
+COMPETITION_DOM_TEST = COMPETITION / "data domestic_test.xlsx"
+COMPETITION_DICTIONARY = COMPETITION / "Data_Dictionary.pdf"
+
 # --- interim -----------------------------------------------------------------
 # pdftotext -layout output, one file per PDF, plus the fingerprint parse.py reads
 # to decide which pages a report prints.
@@ -85,9 +96,11 @@ ADSB_CAPTURE = PROC / "capture_rate.csv"
 PIPELINE = ROOT / "pipeline"
 DCT_PIPELINE = PIPELINE / "dct"
 AVIATION = PIPELINE / "aviation"
+COMPETITION_PIPELINE = PIPELINE / "competition"
 TESTS = PIPELINE / "tests"
 NOTEBOOKS = ROOT / "notebooks"
 TOOLS = ROOT / "tools"
+APP = ROOT / "app"
 
 # The pipeline modules are run as standalone scripts (`.venv/bin/python
 # pipeline/dct/dct_parse.py`), not installed as a package, so they import each
@@ -96,30 +109,28 @@ TOOLS = ROOT / "tools"
 #   TESTS      for test_retarget_international importing test_market_link
 #   AVIATION   for aircraft_seats, shared by the ADS-B builder, its calibration,
 #              the market test and the notebook
+#   COMPETITION_PIPELINE for load and audit, shared by the P2P-vs-PAX test, the
+#              chain model and the competition notebook
 # Adding pipeline/dct to sys.path is also what makes `eras` importable as a
 # package, which is how dct_parse reaches the era-specific readers.
 #
 # Doing this on import means every script that imports paths can import these
 # too, which is why it is a side effect rather than a function the caller has to
 # remember to call.
-for _d in (DCT_PIPELINE, TESTS, AVIATION):
+for _d in (DCT_PIPELINE, TESTS, AVIATION, COMPETITION_PIPELINE):
     if str(_d) not in sys.path:
         sys.path.insert(0, str(_d))
 
 # --- outputs -----------------------------------------------------------------
-# Generated findings live in docs/ because they are read and cited rather than
-# shipped. outputs/ is reserved for submission artifacts: charts, PDF, video.
-DOCS = ROOT / "docs"
-DECISIONS = DOCS / "decisions"
-OUTPUTS = ROOT / "outputs"
-
 # Generated test reports. These are written by the scripts in pipeline/tests and
 # are gitignored: they are findings about the data, not source, and a clean
-# clone regenerates them in a second. Keep them in docs/ rather than outputs/
-# because they get read and cited in the write-up, not shipped in a submission.
-REPORT_MARKET_LINK = DOCS / "market_link_test.md"
-REPORT_AGGREGATE_LINK = DOCS / "aggregate_link_test.md"
-REPORT_RETARGET = DOCS / "retarget_test.md"
+# clone regenerates them in a second. They live in outputs/ rather than docs/ so
+# docs/ holds only hand-written documentation.
+OUTPUTS = ROOT / "outputs"
+REPORT_MARKET_LINK = OUTPUTS / "market_link_test.md"
+REPORT_AGGREGATE_LINK = OUTPUTS / "aggregate_link_test.md"
+REPORT_RETARGET = OUTPUTS / "retarget_test.md"
+REPORT_P2P_VS_PAX = OUTPUTS / "p2p_vs_pax_test.md"
 
-# OpenSky REST credentials, used by opensky.py and the window-cost tool.
+# OpenSky REST credentials, used by tools/fetch_opensky.py and the window-cost tool.
 CREDENTIALS = ROOT / "credentials.json"

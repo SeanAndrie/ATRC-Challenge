@@ -9,6 +9,9 @@ def _(mo):
     mo.md(r"""
     # OMAA flight movement analysis
 
+    > **Phase 1 background — public-data investigation.** Retained as evidence, not
+    > part of the submission deliverable. See `docs/METHODS.md`.
+
     **What this notebook is.** A rigorous read of the OpenSky ADS-B extraction at
     Abu Dhabi International (`OMAA`), covering origin markets, concentration, market geography and
     distance, arrival timing and aircraft turnaround behaviour.
@@ -27,7 +30,8 @@ def _(mo):
     exported from 37 day-files of raw `/flights/arrival` + `/flights/departure`
     responses. This notebook never calls the OpenSky API: historical requests cost 30
     credits each and the remaining daily balance is 40, which is reserved for
-    finishing the extraction. `opensky.py` is the only thing that spends credits.
+    finishing the extraction. `tools/fetch_opensky.py` is the only thing that
+    spends credits.
 
     **Provenance of every number.** Counts are reproducible from the CSV. Country
     attribution depends on OpenSky's *estimated* departure airport; section 7
@@ -128,8 +132,9 @@ def _(fa_HOME_AP, fa_HOME_COUNTRY, fa_airports, fa_events):
     # third: 96 arrivals/day against 145 on clean days. Every statistic below is
     # computed on `fa_ok` only.
     #
-    # The flag itself is computed in two passes upstream (in `opensky.py` and
-    # `scripts/export_omaa_csv.py`): days are scored against the raw median, then
+    # The flag itself is computed in two passes upstream (in
+    # `tools/fetch_opensky.py` and `tools/export_omaa_csv.py`): days are scored
+    # against the raw median, then
     # re-scored against the median of the days that survived. Without that second
     # pass the reference day collapses into the outage block and every healthy day
     # reads as over-observed.

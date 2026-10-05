@@ -2,9 +2,9 @@
 
 The published series is not one document reprinted. Between 2015 and 2025 DCT
 changed layout, unit conventions and table structure several times, so each era
-gets its own reader and dct_parse.py routes a report to the right one. See
-docs/decisions/dct_notes.md for what distinguishes each era and why the split
-happens where it does.
+gets its own reader and dct_parse.py routes a report to the right one. The era
+boundaries and their rationale are summarised in `docs/METHODS.md` Phase 1 and the
+routes are listed in the notebook.
 
 Each module here exposes parse functions over extracted PDF text. They read
 regexes and bounds, not files or paths: text location is dct_common's job, and

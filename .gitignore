@@ -28,13 +28,12 @@ notebooks/__marimo__/
 # clone can reproduce every published number without re-downloading anything.
 /data/raw/
 
-# Generated findings. Regenerate with:
+# Generated diagnostics reports also land in outputs/ (see paths.REPORT_*), so
+# the single /outputs/* rule below covers them:
 #   .venv/bin/python pipeline/tests/test_market_link.py
 #   .venv/bin/python pipeline/tests/test_aggregate_link.py
 #   .venv/bin/python pipeline/tests/test_retarget_international.py
-docs/market_link_test.md
-docs/aggregate_link_test.md
-docs/retarget_test.md
+#   .venv/bin/python pipeline/tests/test_p2p_vs_pax.py
 
 # Submission artifacts are built for release, not committed:
 #   charts, the 10-page PDF, the 1-2 minute video.

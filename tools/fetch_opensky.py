@@ -55,6 +55,22 @@ def _():
 
 
 @app.cell
+def _(mo):
+    # This is a marimo notebook, but it lives in tools/ rather than notebooks/
+    # because it is data *acquisition*, not analysis: it is the only thing in the
+    # repo that spends OpenSky credits (30 per historical query), and its two
+    # siblings export_omaa_csv.py and measure_window_cost.py are here for the
+    # same reason. Launch it with `marimo edit tools/fetch_opensky.py`.
+    mo.md(
+        """
+    > **Phase 1 background — public-data investigation.** Retained as evidence,
+    > not part of the submission deliverable. See `docs/METHODS.md`.
+    """
+    )
+    return
+
+
+@app.cell
 def _(FlightsData4, Path, paths, pd):
     # REST parquet, Trino parquet, and the OurAirports reference table.
     DATA_DIR = paths.OPENSKY_TRINO

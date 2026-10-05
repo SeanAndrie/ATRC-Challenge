@@ -142,6 +142,9 @@ def _(mo):
     mo.md(r"""
     # Can airport data predict Abu Dhabi hotel demand?
 
+    > **Phase 1 background — public-data investigation.** Retained as evidence, not
+    > part of the submission deliverable. See `docs/METHODS.md`.
+
     **A negative result on the link, and a positive result on the chain.**
 
     The challenge brief asks for a simulator linking air supply to Abu Dhabi
@@ -1077,7 +1080,8 @@ def _(matched, mo, month_dummies, np, pd, wmape):
 
         `use_arrivals`, `use_dummies`, `use_trend` and `fourier_k` switch
         individual blocks on and off, so the same code produces every column of
-        the ablation table. Mirrors scripts/test_aggregate_link.py exactly.
+        the ablation table. Mirrors `pipeline/tests/test_aggregate_link.py`
+        exactly.
         """
         rows = []
         for yr in sorted(matched.year.unique()):
@@ -1628,7 +1632,7 @@ def _(
     assert set(mix_ablation.year) == {2015, 2016, 2022}, sorted(mix_ablation.year)
 
     # Market figures are pinned to the values printed by
-    # scripts/test_market_link.py, so the notebook cannot quietly tell a
+    # pipeline/tests/test_market_link.py, so the notebook cannot quietly tell a
     # different story from the published report.
     expected_mix = {
         2015: (9, 0.728, 0.433, 3, 40.3),
