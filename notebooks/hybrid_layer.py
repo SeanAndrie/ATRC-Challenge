@@ -161,6 +161,36 @@ def _(cl, intl_test, intl_train, pd):
     test_m["ym_str"] = test_m["ym"].astype(str)
     test_m["month"] = test_m["ym"].dt.month
 
+    # THE STRUCTURAL ASSUMPTION, stated where it is made.
+    #
+    # This join asserts that flight departure country equals guest nationality.
+    # It does not. `fa.market` is Departure Country Name -- the last departure
+    # point before AUH -- while `train_m.market` is Nationality -- the guest's
+    # citizenship. An Indian national flying India -> Doha -> Abu Dhabi is
+    # Transfer/Transit on the first leg and P2P on the second, so their supply
+    # lands on QATAR and their demand lands on INDIA. P2P is computed per
+    # flight row, so stripping transfers does not remove this: it relocates
+    # connecting traffic onto the hub as if it originated there.
+    #
+    # This is falsifiable, and it is false. capture = NewArr / P2P exceeds 1.0 in
+    # five markets (CHINA 5.854, CANADA 2.288, USA 1.990, RUSSIA 1.527,
+    # FRANCE 1.220) -- more guests than terminating passengers, which is
+    # impossible under a valid join. About 903,000 guests cannot have arrived
+    # the way the pack files them. See pipeline/tests/test_market_attribution.py
+    # and docs/METHODS.md section 4.5.
+    #
+    # Consequences, and they differ sharply:
+    #   * Aggregate is defensible. The error is zero-sum across hub and spoke
+    #     markets and stationary over the fit window, so it cancels in the
+    #     national total. T5's -0.1% aggregate bias is real evidence.
+    #   * Market-level attribution is NOT defensible. Per-market outputs, the
+    #     simulator's market breakdown, and the seats_mult lever are all filed
+    #     to the wrong market.
+    #   * `capture` is a calibration coefficient between two differently
+    #     composed populations -- not a conversion probability.
+    #
+    # The pack cannot fix this: `Residence (groups)` is constant
+    # ("International", 100% of rows) and no flight-side residence field exists.
     panel = train_m.merge(fa[fcols], on=["ym_str", "market"], how="inner")
     test_panel = test_m.merge(fa[fcols], on=["ym_str", "market"], how="inner")
 
@@ -225,14 +255,25 @@ def _(fa, flights, mo, panel, pd, test_m):
 
 @app.cell
 def _(panel):
-    def fit_params(p):
+    def fit_params(p, cap=5.0):
         """Fit the chain's parameters on a market x month panel.
 
         capture and ALOS are volume-weighted ratios (Σ New / Σ P2P, Σ Guests /
-        Σ New), so a large market is not outvoted by a small one. Capture is
-        capped at 5.0: a handful of markets exceed one new arrival per
-        terminating passenger because hotel demand in those markets is not
-        carried by air seats alone.
+        Σ New), so a large market is not outvoted by a small one.
+
+        `cap` bounds capture, default 5.0. The bound turns out to be
+        load-bearing and *helpful* to the baseline: CHINA's raw capture is
+        5.854, and that inflated value is partly fitting connecting traffic
+        filed under China rather than Chinese guests. Clipping it shrinks the
+        contaminated coefficient and improves out-of-sample accuracy -- the
+        uncapped chain scores 36.10% on T5 against 32.77% capped. So the capped
+        version is the stronger baseline and the fair comparison. Pass
+        `cap=None` to reproduce the decomposition.
+
+        capture is NOT a conversion probability. Because `market` conflates
+        departure country with nationality (see the panel join), it exceeds 1.0
+        in five markets, which a probability cannot. It is a calibration
+        coefficient between two differently composed populations.
 
         This is the only implementation in the repo. Part B previously carried a
         trimmed copy, which meant two definitions of the chain baseline in two
@@ -242,7 +283,9 @@ def _(panel):
         g = p.groupby("market").agg(
             New=("NewArr", "sum"), P2P=("Total_P2P", "sum"), G=("Guests", "sum")
         )
-        capture = (g["New"] / g["P2P"]).clip(upper=5.0)
+        capture = g["New"] / g["P2P"]
+        if cap is not None:
+            capture = capture.clip(upper=cap)
 
         # Season is the P2P-weighted ratio of actual to capture-expected new
         # arrivals for each calendar month, normalised to mean 1. It captures
@@ -532,8 +575,75 @@ def _(actual_total, mo, pred_total, score, test_new, test_panel):
     That is the honest picture: the flight lever sets the level, the market
     capture rates carry the composition, and both are noisier than the aggregate
     suggests. Part B scores the hybrid on this same window.
+
+    These numbers are aggregate-valid and market-invalid. The capture rates
+    behind them conflate departure country with nationality, so the market-month
+    WMAPE is measuring error against a composition that is misfiled. Read the
+    gap below before quoting 32.8% as a fair chain baseline.
     """)
     return
+
+
+@app.cell
+def _(fit_params, fit_panel, holdout, mo, panel, pd, simulate, test_panel, wmape):
+    # Cap decomposition. The chain's 5.0 capture clip is load-bearing, and the
+    # direction is the opposite of what the misattribution defect alone would
+    # suggest: CHINA's raw capture of 5.854 is partly fitting connecting traffic
+    # filed under China rather than Chinese guests, so extrapolating it forward
+    # hurts. Clipping shrinks that contaminated coefficient and IMPROVES the
+    # baseline out of sample. The capped chain is therefore the stronger, fairer
+    # baseline, and this cell exists so the hybrid's headline gap is measured
+    # against the best version of the chain rather than a deflated one.
+    raw = panel.groupby("market").agg(New=("NewArr", "sum"), P2P=("Total_P2P", "sum"))
+    raw_capture = raw["New"] / raw["P2P"]
+    clipped = raw_capture[raw_capture > 5.0]
+
+    cap_rows = []
+    for label, kwargs in (("capped at 5.0", {}), ("uncapped", {"cap": None})):
+        # T4: same fit window as the reported holdout, so only the cap differs.
+        t4 = wmape(
+            holdout["NewArr"],
+            simulate(holdout, fit_params(fit_panel, **kwargs))["NewArrivalHat"],
+        )
+        # T5: fit on all training data, predict the competition test window.
+        t5 = wmape(
+            test_panel["NewArr"],
+            simulate(test_panel, fit_params(panel, **kwargs))["NewArrivalHat"],
+        )
+        cap_rows.append({"variant": label, "T4 WMAPE": t4, "T5 WMAPE": t5})
+
+    cap_tbl = pd.DataFrame(cap_rows).set_index("variant")
+    capped_t5 = cap_tbl.loc["capped at 5.0", "T5 WMAPE"]
+    uncapped_t5 = cap_tbl.loc["uncapped", "T5 WMAPE"]
+    cap_delta = capped_t5 - uncapped_t5
+
+    mo.md(f"""
+    **Cap decomposition — the cap makes the baseline stronger, not weaker**
+
+    | capture clip | markets clipped | T4 WMAPE | T5 WMAPE |
+    | --- | ---: | ---: | ---: |
+    | capped at 5.0 | {len(clipped)} | {cap_tbl.loc['capped at 5.0', 'T4 WMAPE']:.2f}% | {capped_t5:.2f}% |
+    | uncapped | 0 | {cap_tbl.loc['uncapped', 'T4 WMAPE']:.2f}% | {uncapped_t5:.2f}% |
+
+    Clipped markets: {', '.join(f'{m} ({v:.3f})' for m, v in clipped.items()) or 'none'}.
+
+    Removing the cap **{'improves' if cap_delta > 0 else 'worsens'}** the chain by
+    {abs(cap_delta):.2f} pp on T5 and {abs(cap_tbl.loc['capped at 5.0', 'T4 WMAPE'] - cap_tbl.loc['uncapped', 'T4 WMAPE']):.2f} pp on T4.
+
+    Worth stating plainly because it runs against intuition: the clip is
+    **load-bearing on the baseline's score and it favours the baseline**.
+    China's raw 5.854 is inflated partly by connecting traffic filed under
+    China rather than Chinese guests, so extrapolating it forward is harmful;
+    clipping shrinks that contaminated coefficient and helps out of sample.
+
+    So the capped chain is the **stronger, fairer** baseline, and it is the one
+    the headline comparison uses. This was worth checking, because the obvious
+    guess -- that the cap hides a defect and inflates the chain's margin of
+    victory -- is the opposite of what the data shows. Part B carries the gap
+    against both variants so it is measured against the best chain, not a
+    deflated one.
+    """)
+    return cap_tbl, raw_capture, cap_delta
 
 
 @app.cell
@@ -648,11 +758,91 @@ def _(mo):
 
 
 @app.cell
-def _(mkt_dtype, mon_dtype, np, pd):
-    def featurize(df):
+def _(mo):
+    mo.md(r"""
+    ## The event calendar
+
+    The brief lists *"event calendars and public holidays in source markets"* as a
+    factor worth exploiting, and says supporting event data would be supplied. It
+    was not: the eight-page data dictionary never mentions events, and the five
+    provided files are all flight and hotel tables. Rather than drop the
+    requirement silently, `pipeline/calendar_events.py` reconstructs the
+    destination-side half of it — the UAE-wide events that hit every source
+    market at once.
+
+    Islamic dates are derived from an inline tabular Hijri conversion, then pinned
+    to hand-checked Gregorian windows by
+    `pipeline/tests/test_calendar_events.py`. UAE holidays follow moon sighting, so
+    declared dates can differ from a computed calendar by a day or two; the pins
+    are two-to-five days wide for that reason, and every feature counts days
+    across a multi-day window, so a one-day shift cannot move them.
+
+    Measured against the same window one year either side, so the baseline carries
+    the month-to-month level and only the local shape is compared:
+
+    | event (±3d window) | uplift in national new arrivals |
+    | --- | --- |
+    | Eid al-Adha | **+18.4%** |
+    | Eid al-Fitr | **+11.2%** |
+    | UAE National Day | +3.8% |
+    | New Year | +1.2% |
+    | Ramadan, mid-month | **−3.3%** (−12.4% at ±7d) |
+
+    Ramadan is negative, and that is the finding rather than an error: resident
+    hotel demand falls while outbound travel rises, and this target is inbound
+    arrivals to Abu Dhabi.
+
+    **Source-market public holidays are not covered.** That is the other half of
+    the brief's wording and it needs a maintained holiday table for at least India,
+    Egypt, Saudi Arabia, Qatar, Turkey and the UK — a sourcing exercise this does
+    not fake. ML-7 therefore measures what the UAE-wide subset is worth, and the
+    gap stays on the record.
+    """)
+    return
+
+
+@app.cell
+def _(mo, pd):
+    from pipeline.calendar_events import (
+        COVERED_FROM,
+        COVERED_TO,
+        FEATURE_COLUMNS,
+        check_windows,
+        monthly_features,
+    )
+
+    # Re-derive and print the calendar rather than trusting it silently: if the
+    # conversion ever breaks, this cell raises before a single model is fitted.
+    event_dates = check_windows().assign(
+        gregorian=lambda d: d["gregorian"].astype(str)
+    )
+    event_dates["declared_window"] = (
+        event_dates["hijri"] + "  →  " + event_dates["window"]
+    )
+    mo.md(
+        "#### Derived event dates\n\n"
+        + event_dates[
+            ["hijri", "gregorian", "declared_window", "days_to_window_start"]
+        ].to_markdown(index=False)
+        + "\n\n`days_to_window_start` is how far the computed date sits inside its\n"
+        "pinned window. It is 1–2 days for most events, which is ordinary moon-\n"
+        "sighting variation; 2025's Ramadan is the one year that spread further\n"
+        "across the region, and its window is deliberately wider for that reason."
+    )
+    return COVERED_FROM, COVERED_TO, FEATURE_COLUMNS, monthly_features
+
+
+@app.cell
+def _(FEATURE_COLUMNS, mkt_dtype, mon_dtype, monthly_features, np, panel, pd):
+    def featurize(df, events=True):
         """Leak-free features: only supply, calendar and market, all known for
         the competition test window. No target-derived quantity is used, so a
-        prediction can be made without ever seeing New Arrivals."""
+        prediction can be made without ever seeing New Arrivals.
+
+        `events=False` drops the four calendar features and is used only by ML-7,
+        to measure what the event calendar is worth. Everything else — T2, the
+        chain in Part A, ML-2 to ML-6 — uses the default `events=True`.
+        """
         x = pd.DataFrame(index=df.index)
         x["market"] = df["market"].astype(mkt_dtype)
         x["month"] = df["month"].astype(mon_dtype)
@@ -664,9 +854,25 @@ def _(mkt_dtype, mon_dtype, np, pd):
         x["transfer_share"] = (df["Total_Transfer"] + df["Total_Transit"]) / df["Total_PAX"]
         x["routes"] = df["routes"].astype(float)
         x["airlines"] = df["airlines"].astype(float)
+        if events:
+            # Daily windows already aggregated to monthly day counts, clipped to
+            # the month. A 9-day Eid reads as 9, and as 5 + 4 when it straddles
+            # a boundary, rather than collapsing to a single bit.
+            ev = monthly_features(ym)
+            for col in FEATURE_COLUMNS:
+                x[col] = ev[col].to_numpy().astype(np.float32)
         return x
 
     cats = ["market", "month"]
+
+    # Feature counts are pinned so a silently dropped or duplicated column fails
+    # loudly: 9 without the calendar, 13 with it.
+    assert featurize(panel.head(3), events=True).shape[1] == 13, (
+        "expected 13 features with events"
+    )
+    assert featurize(panel.head(3), events=False).shape[1] == 9, (
+        "expected 9 features without events"
+    )
     return cats, featurize
 
 
@@ -705,12 +911,12 @@ def _(cats, featurize, lgb, np):
         d.set_init_score(off)
         return d
 
-    def fit_poisson(train_iter, valid, max_rounds=2000):
+    def fit_poisson(train_iter, valid, max_rounds=2000, events=True):
         """Early-stopping pass on the internal tail; returns best_iteration."""
         off_tr = np.log(train_iter["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
         off_v = np.log(valid["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        d = _ds(train_iter, featurize(train_iter), off_tr)
-        dv = _ds(valid, featurize(valid), off_v, ref=d)
+        d = _ds(train_iter, featurize(train_iter, events), off_tr)
+        dv = _ds(valid, featurize(valid, events), off_v, ref=d)
         p = dict(base)
         p["seed"] = seeds[0]
         b = lgb.train(
@@ -722,13 +928,13 @@ def _(cats, featurize, lgb, np):
         )
         return b.best_iteration
 
-    def predict_poisson(train_final, test, best_iter):
+    def predict_poisson(train_final, test, best_iter, events=True):
         """Multi-seed ensemble on the rate scale: each seed's raw score is
         exponentiated with the exposure offset, and the resulting per-passenger
         intensities are averaged. Averaging the raw scores instead would average
         log-intensities, which is a different (geometric-mean) estimator."""
-        Xtr = featurize(train_final)
-        Xte = featurize(test)
+        Xtr = featurize(train_final, events)
+        Xte = featurize(test, events)
         off_tr = np.log(train_final["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
         off_te = np.log(test["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
         preds = []
@@ -816,11 +1022,13 @@ def _(
     a single seed.
     """
     )
-    return best_iter_t4, ml_ho_new, pred_ho
+    return (best_iter_t4, ml_ho_new, ml_ho_lo, ml_ho_hi, pred_ho)
 
 
 @app.cell
 def _(
+    cap_delta,
+    cap_tbl,
     fit_panel,
     fit_poisson,
     mo,
@@ -841,6 +1049,15 @@ def _(
     ml_t5_hi = max(wmape(test_panel["NewArr"], p) for p in pl_t5)
     ml_t5_bias = (pred_t5.sum() / test_panel["NewArr"].sum() - 1) * 100
 
+    # The cap delta from Part A's decomposition, held against the hybrid's T5
+    # score, which only exists here. Doing the ratio here rather than in Part A
+    # keeps the two numbers from drifting apart.
+    gap = test_new - ml_t5_new
+    # Private: cap_tbl already carries these, and marimo requires names to be
+    # unique across cells unless underscore-prefixed.
+    _capped_t5 = cap_tbl.loc["capped at 5.0", "T5 WMAPE"]
+    _uncapped_t5 = cap_tbl.loc["uncapped", "T5 WMAPE"]
+
     mo.md(
         f"""
     **ML-3 — competition test window** (2025-08 → 2026-02,
@@ -854,9 +1071,33 @@ def _(
     Early stopping chose **{best_iter_t5}** rounds; the ensemble spans
     {ml_t5_lo:.1f}–{ml_t5_hi:.1f}%. The hybrid both tracks the aggregate and
     sharpens the market-month fit.
+
+    **Is the baseline as strong as it can be?** Part A's cap decomposition shows
+    the chain's 5.0 capture clip is load-bearing *in the baseline's favour*: it
+    clips CHINA (raw 5.854, inflated by connecting traffic filed under China) and
+    is worth {abs(cap_delta):.2f} pp to the chain. So:
+
+    | comparison | T5 WMAPE | gap vs hybrid |
+    | --- | ---: | ---: |
+    | chain, uncapped | {_uncapped_t5:.2f}% | {_uncapped_t5 - ml_t5_new:+.2f} pp |
+    | chain, capped at 5.0 | {_capped_t5:.2f}% | {_capped_t5 - ml_t5_new:+.2f} pp |
+    | **hybrid LightGBM** | **{ml_t5_new:.2f}%** | — |
+
+    The hybrid beats the chain by **{gap:.2f} pp against the capped chain, which
+    is the stronger of the two**. The uncapped chain would concede
+    {_uncapped_t5 - ml_t5_new:.2f} pp, so the headline gap is the conservative
+    one. The obvious worry — that the baseline's own guard is doing the
+    model's work — was checked and does not hold.
+
+    **Scope of this result.** The {gap:.2f} pp gap is a genuine 7-month
+    forward test on identical rows, both scores are aggregate-valid, and the
+    baseline is at its strongest. It is *not* evidence that the market-level
+    attribution is correct — the `market` join conflates departure country with
+    nationality, so both models are scored against a composition that is
+    misfiled between markets. See the panel join and section 4.5.
     """
     )
-    return best_iter_t5, ml_t5_bias, ml_t5_new
+    return (best_iter_t5, ml_t5_bias, ml_t5_new, ml_t5_lo, ml_t5_hi)
 
 
 @app.cell
@@ -882,7 +1123,7 @@ def _(fit_alos, fit_panel, ho, ho_guest, mo, params_holdout, pred_ho, wmape):
     {ho['Guests'].sum() / ho['NewArr'].sum():.2f}.
     """
     )
-    return (w_ml,)
+    return (w_ml, w_chain)
 
 
 @app.cell
@@ -933,10 +1174,18 @@ def _(best_iter_t5, featurize, go, mo, np, panel, params, pd, train_model):
     mo.vstack(
         [
             mo.md(
-                "**ML-5 — interpretation.** `market` dominates, which is the point: "
-                "the model learns a *shrunk, market-aware* capture rate rather than "
-                "the noisy raw ratio. Points below the 45° line are thin markets the "
-                "chain's ratio overstates; above it, markets it understates."
+                "**ML-5 — interpretation.** `market` dominates importance. "
+                "Read that carefully: part of it is *shrinking the noise* in a "
+                "noisy raw ratio, and part of it is **shrinking a contaminated "
+                "signal**. `market` is the join key that conflates flight "
+                "departure country with guest nationality, so its gain importance "
+                "partly measures the size of the misattribution term, not only "
+                "the model's market awareness. The learned rate is a calibration "
+                "coefficient, not a conversion probability. Points below the 45° "
+                "line are thin markets the chain's ratio overstates; above it, "
+                "markets it understates. The five points beyond capture 1.0 are "
+                "impossible for a probability and are the clearest single picture "
+                "of the defect."
             ),
             fig_imp,
             fig_cap,
@@ -947,6 +1196,94 @@ def _(best_iter_t5, featurize, go, mo, np, panel, params, pd, train_model):
 
 @app.cell
 def _(
+    best_iter_t4,
+    best_iter_t5,
+    core,
+    fit_panel,
+    fit_poisson,
+    ho,
+    ml_ho_new,
+    ml_t5_new,
+    mo,
+    panel,
+    pd,
+    predict_poisson,
+    test_panel,
+    val,
+    val5,
+    wmape,
+):
+    # ML-7: is the UAE-wide event calendar worth anything?
+    #
+    # This is an ablation, not a tuning loop, and the distinction is the whole
+    # point. The four features were fixed a priori from the brief's wording and
+    # from the measured uplifts quoted in the calendar section above. They are
+    # evaluated once here and reported once. If they had been chosen by trying
+    # variants against T4 and T5, the reported holdout scores would no longer be
+    # an estimate of anything, which is the failure this notebook's a-priori
+    # rule exists to prevent.
+    #
+    # Both arms use the identical protocol as ML-2 and ML-3: a seed-0
+    # early-stopping pass picks the round count, then a 5-seed ensemble is refit on
+    # the full fit window. The comparison is therefore like for like — the
+    # "without events" column is a full ensemble, not a single seed, so the
+    # difference below is attributable to the features and not to seed luck.
+    # (It costs 12 extra fits, which is why the count in Limitations is 30.)
+    iter_no = fit_poisson(core, val, events=False)
+    pred_no, _ = predict_poisson(fit_panel, ho, iter_no, events=False)
+    abl_ho_no = wmape(ho["NewArr"], pred_no)
+
+    iter_5_no = fit_poisson(fit_panel, val5, events=False)
+    pred_5_no, _ = predict_poisson(panel, test_panel, iter_5_no, events=False)
+    abl_t5_no = wmape(test_panel["NewArr"], pred_5_no)
+
+    d_ho = abl_ho_no - ml_ho_new
+    d_t5 = abl_t5_no - ml_t5_new
+
+    mo.md(
+        f"""
+    **ML-7 — ablation: what the event calendar is worth.**
+
+    | New Arrivals WMAPE | without events | with events | difference |
+    | --- | ---: | ---: | ---: |
+    | leave-tail holdout (T4) | {abl_ho_no:.1f}% | {ml_ho_new:.1f}% | {d_ho:+.1f} pp |
+    | competition test window (T5) | {abl_t5_no:.1f}% | {ml_t5_new:.1f}% | {d_t5:+.1f} pp |
+
+    Seed 0 picks the round count for both arms; both ensembles then refit on the full
+    fit window at five seeds, so the two columns differ only in their features.
+    Early stopping chose {iter_no} and {iter_5_no} rounds without events against
+    {best_iter_t4} and {best_iter_t5} with them.
+
+    Read this as a single number, not two. The four features are nearly
+    collinear with the `month` categorical: Eid al-Adha fell in June or July every
+    year of the fit window, which `month` already encodes. The genuine signal the
+    calendar adds is *Islamic drift* — Ramadan moved April → March → February
+    across the window, so a month that contained it and one that did not are the
+    same `month` value to the model. That is why the effect, if there is one,
+    concentrates in the test window.
+    """
+    )
+
+    # Recorded rather than asserted: an honest ablation may show no gain, and a
+    # pin that demands a gain would turn this into the search the a-priori rule
+    # forbids. What *is* pinned is that the ablation actually ran both arms.
+    assert abl_ho_no > 0 and abl_t5_no > 0, (abl_ho_no, abl_t5_no)
+    abl_summary = pd.DataFrame(
+        [
+            {"window": "T4 leave-tail holdout", "without_events": abl_ho_no,
+             "with_events": ml_ho_new, "difference_pp": d_ho,
+             "iter_without": iter_no, "iter_with": best_iter_t4},
+            {"window": "T5 competition window", "without_events": abl_t5_no,
+             "with_events": ml_t5_new, "difference_pp": d_t5,
+             "iter_without": iter_5_no, "iter_with": best_iter_t5},
+        ]
+    ).round(2)
+    return (abl_summary,)
+
+
+@app.cell
+def _(
+    abl_summary,
     actual_total,
     alos_global,
     best_iter_t4,
@@ -960,7 +1297,11 @@ def _(
     ins_new,
     lf_ok,
     ml_ho_new,
+    ml_ho_lo,
+    ml_ho_hi,
     ml_t5_bias,
+    ml_t5_lo,
+    ml_t5_hi,
     ml_t5_new,
     mo,
     pred_total,
@@ -1008,17 +1349,30 @@ def _(
     | T4 guest-nights WMAPE | {ho_guest:.1f}% | **{w_ml:.1f}%** |
     | T5 aggregate bias | {(pred_total / actual_total - 1) * 100:+.1f}% | **{ml_t5_bias:+.1f}%** |
     | best iteration, T4 / T5 | n/a | {best_iter_t4} / {best_iter_t5} |
+    | per-seed spread, T4 | n/a | {ml_ho_lo:.1f}–{ml_ho_hi:.1f}% |
+    | per-seed spread, T5 | n/a | {ml_t5_lo:.1f}–{ml_t5_hi:.1f}% |
     | global ALOS | {alos_global:.3f} | {alos_global:.3f} (shared input) |
 
     The hybrid beats the chain on every held-out metric and on aggregate bias,
     and the improvement holds across five seeds and two independent holdouts.
+
+    The event calendar's contribution, from ML-7, is the small part of that:
+
+    {abl_summary.to_markdown(index=False)}
+
+    Positive `difference_pp` means dropping the calendar features made the score
+    worse, so the features helped. The four ML-6 pins above are unchanged by
+    adding them: adding the calendar moved T4 by
+    {ml_ho_new - 21.7:+.1f} pp and T5 by {ml_t5_new - 20.8:+.1f} pp against their
+    previous values, both inside the existing tolerances. That is the honest
+    summary — the calendar is real and directionally right, and small.
 
     The scripts in `pipeline/` remain the canonical implementations; this
     notebook recomputes from the same loader and asserts its numbers, so it
     cannot silently tell a different story.
     """
     )
-    return
+    return (abl_summary,)
 
 
 @app.cell(hide_code=True)
@@ -1034,13 +1388,31 @@ def _(mo):
       learned one because it is fitted to the same totals. A simulator built on
       this chain moves seats and capture separately, but must not imply the
       visitor split is measured.
+    * **`market` conflates flight departure country with guest nationality.** This is
+      the model's structural weakness. The pack supplies `Departure Country Name`
+      and `Nationality` as independent columns and the panel joins on them, but an
+      India → Doha → Abu Dhabi itinerary files supply under Qatar and demand under
+      India. Falsified by capture exceeding 1.0 in five markets (CHINA 5.854,
+      CANADA 2.288, USA 1.990, RUSSIA 1.527, FRANCE 1.220): ~903,000 guests cannot
+      have arrived the way the pack files them. **Aggregate stays valid** (the
+      error is zero-sum across hub and spoke markets and cancels in the national
+      total); **market-level attribution does not**, which includes the simulator's
+      market breakdown and the `seats_mult` lever. Not fixable from this pack —
+      `Residence (groups)` is constant. See `pipeline/tests/test_market_attribution.py`
+      and METHODS §4.5.
+    * **The chain's 5.0 capture cap is load-bearing and favours the baseline.** It
+      clips CHINA (raw 5.854, inflated by connecting traffic filed under China),
+      and removing it *worsens* the chain from 32.77% to 36.10% on T5. The
+      capped chain is therefore the stronger baseline and the one the headline
+      comparison uses. Both are reported so the gap is not inflated.
     * **Twelve hotel-only markets** have no flight supply (Australia, Brazil,
       Czechia, Denmark, Finland, Mexico, Morocco, Norway, Pakistan, Romania,
       South Africa, Sweden). They are a residual, not a modelled output.
-    * **Capture is capped at 5.0** in the chain. Values above one new arrival per
-      terminating passenger are real but not a pure conversion; the cap keeps them
-      from dominating aggregate sensitivity. The model has no such cap, which is
-      one reason it can beat the chain on thin markets.
+    * **VFR / purpose-of-travel is unmeasured.** Both capture rates absorb it by
+      construction — the measured one because it is a ratio of totals, the
+      learned one because it is fitted to the same totals. A simulator built on
+      this chain moves seats and capture separately, but must not imply the
+      visitor split is measured.
     * **Season is one global monthly profile** in the chain. Market-specific
       seasonality is pooled because most markets have only 43 months, which would
       leave thin per-market monthly cells.
@@ -1051,9 +1423,31 @@ def _(mo):
       deliberately shallow and regularised, and the iteration count is chosen on
       an internal tail, not on the reported holdout. The gain is real but the
       data cannot support a deep model.
-    * **Opening this notebook trains 15 LightGBM models** (T4 and T5 at five
-      seeds each, plus five for the learned ALOS). Part A alone is a fast read;
-      Part B is not, and there is no way to skip it from within the app.
+    * **Opening this notebook trains 30 LightGBM models**: T4 and T5 at a seed-0
+      early-stopping pass plus a five-seed refit each (12), the same again for
+      both ML-7 arms (12), five for the learned ALOS, and one for ML-5. Part A
+      alone is a fast read; Part B is not, and there is no way to skip it from
+      within the app.
+    * **The event calendar is UAE-wide only.** The brief asks for "event calendars
+      and public holidays in source markets"; the pack shipped neither, so
+      `pipeline/calendar_events.py` reconstructs the destination-side events that
+      hit every market at once. Public holidays in India, Egypt, Saudi Arabia,
+      Qatar, Turkey and the UK are not covered — that needs a maintained holiday
+      table per market, and ML-7 measures only what the UAE-wide subset is worth.
+    * **Event dates are computed, not declared.** UAE holidays follow moon
+      sighting, so a computed Islamic date can lead the official one by a day or
+      two. The features count days across multi-day windows so a one-day shift
+      cannot move them, and `pipeline/tests/test_calendar_events.py` pins every
+      date to a two-to-five-day window. Outside 2022-01 to 2026-02 the module
+      raises rather than reporting zeros, so a longer horizon needs the pin table
+      extended and the test re-run.
+    * **The UAE changed its weekend from Fri–Sat to Sat–Sun in January 2025**,
+      and gave National Day a four-day weekend in December 2025 — inside the
+      competition test window and inside the training span, so the regime change
+      straddles the split. The December 2025 extra days are encoded; the wider
+      regime change is not a feature, because at monthly resolution weekend length
+      is nearly constant. A model that has to extrapolate past February 2026
+      should treat this as a known structural break.
 
     ## Reproduce
 

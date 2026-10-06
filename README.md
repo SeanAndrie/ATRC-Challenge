@@ -2,7 +2,7 @@
 
 **Submission deliverable.** A transparent parametric demand chain
 (`seats → PAX → P2P → New Arrivals → guest-nights`) and a hybrid LightGBM layer
-that learns the conversion step, built on the licensed competition data pack.
+that replaces the fixed capture ratio, built on the licensed competition data pack.
 Start at [`docs/METHODS.md`](docs/METHODS.md).
 
 ## Submission at a glance
@@ -32,7 +32,8 @@ pipeline/paths.py  every filesystem path in the project
 pipeline/dct/      DCT PDF parsing, by report era
 pipeline/aviation/ passenger and ADS-B builders
 pipeline/hotel_supply.py
-pipeline/tests/    five standalone diagnostics
+pipeline/calendar_events.py   UAE event calendar (Ramadan, Eid, National Day, NYE)
+pipeline/tests/    seven standalone diagnostics
 notebooks/         three marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
@@ -84,6 +85,8 @@ in particular is quota-limited and may not be repeatable.
 .venv/bin/python pipeline/tests/test_aggregate_link.py
 .venv/bin/python pipeline/tests/test_retarget_international.py
 .venv/bin/python pipeline/tests/test_p2p_vs_pax.py
+.venv/bin/python pipeline/tests/test_calendar_events.py
+.venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 ```
 
@@ -158,9 +161,45 @@ submission itself is Phase 2–4.
 
 On the 2022-2026 pack the parametric demand chain predicts New Arrivals at 28.4%
 WMAPE on a holdout (36.0% seasonal-naive), and the hybrid LightGBM layer cuts
-that to **21.7%** — **20.8%** on the actual 2025-08 to 2026-02 test window
-(aggregate bias −0.5% vs +1.1%). Guest-nights reach 21.0% with a learned ALOS.
+that to **21.3%** — **20.6%** on the actual 2025-08 to 2026-02 test window
+(aggregate bias −0.1% vs +1.1%). Guest-nights reach 20.8% with a learned ALOS.
 See [`docs/METHODS.md` §3–4](docs/METHODS.md#phase-3--parametric-layer).
+
+### Read this before quoting any market-level number
+
+The `market` key in every model here joins flight **departure country** to hotel
+guest **nationality**. That equality is false, and it is falsified arithmetically:
+capture (`New Arrivals / P2P`) **exceeds 1.0 in five markets** — CHINA 5.854,
+CANADA 2.288, USA 1.990, RUSSIA 1.527, FRANCE 1.220 — meaning ~903,000 guests
+could not have arrived the way the pack files them. Connecting passengers are
+filed under the hub (India → Doha → AUH books as QATAR supply, INDIA demand).
+
+- **Aggregate results are valid.** The error is zero-sum across hub and spoke
+  markets and cancels in the national total. This is *why* the 20.6% vs 32.8%
+  gap is real evidence, and the only reason.
+- **Market-level attribution is not valid.** Per-market output, the simulator's
+  market breakdown, and the `seats_mult` lever are all filed to the wrong
+  market. Success criteria 01/05/06 depend on these.
+- **`capture` is a calibration coefficient, not a conversion probability.**
+
+Not fixable from this pack: `Residence (groups)` is constant and no flight-side
+residence field exists. Guarded by
+`pipeline/tests/test_market_attribution.py`; full analysis in
+[`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
+
+One implication was checked and is worth stating: the chain's 5.0 capture cap
+**helps** the baseline (32.77% capped vs 36.10% uncapped), because China's
+inflated coefficient is itself partly this misattribution. So the headline gap is
+measured against the strongest version of the chain — see
+[§4.6](docs/METHODS.md#46-the-capture-cap-helps-the-baseline).
+
+The brief also names event calendars and public holidays as a lever, and says
+supporting data would be supplied. **The pack contained none**, so
+`pipeline/calendar_events.py` reconstructs the UAE-wide half from an inline
+tabular Hijri conversion pinned to hand-checked windows. Ablated, it is worth
+**+0.41 pp** on the holdout and **+0.25 pp** on the test window — real, consistent
+in sign, small. Source-market public holidays are still not covered; see
+[`docs/METHODS.md` §4.3](docs/METHODS.md#43-the-event-calendar-and-what-it-is-worth).
 
 ## Mapping to the success criteria
 
@@ -170,21 +209,26 @@ See [`docs/METHODS.md` §3–4](docs/METHODS.md#phase-3--parametric-layer).
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
-| 05 | Granularity by market and season | 33-market panel, monthly season index |
-| 06 | Decision relevance | capture spread is the allocation lever; [scope limits](docs/METHODS.md#36-scope-limits-and-honest-positioning) |
+| 05 | Granularity by market and season | 33-market panel, monthly season index — **attribution unvalidated, see the warning above** |
+| 06 | Decision relevance | capture spread is the allocation lever; **market levers misfiled, see the warning above** |
 | 07 | Reproducibility | pinned assertions T7/ML-6; [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
 
 ## Open work
 
-- **Simulator.** The chain and the learned layer both exist in
-  `notebooks/hybrid_layer.py`; the interactive front end that exposes the levers
-  and renders by market and season does not.
+- **Market attribution is the top blocker.** It is pinned and guarded but not
+  resolved. Needs passenger residence/nationality on the flight side, or all
+  output must be re-scoped to aggregate — which costs success criteria 01, 05
+  and 06. See [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
+- **Simulator, aggregate-only until attribution resolves.** The chain and the
+  learned layer both exist in `notebooks/hybrid_layer.py`; the interactive front
+  end that exposes the levers and renders by season does not. Its market
+  breakdown and `seats_mult` lever must be withheld or labelled supply-side-only.
 - **Serve the ML layer** behind that front end so the learned capture drives
   planning, not just the report.
 - **52 air-only origins** have no measured hotel capture rate. OpenSky data in
   `data/raw/opensky/` is intended to close this and is not yet consumed; it is
   pulled by `tools/fetch_opensky.py`, which spends credits and so has not been
-  re-run.
+  re-run. Note this extends *supply* coverage and does nothing for attribution.
 - **VFR share is unmeasured and no public source exists.** Any
   passenger-to-visitor conversion is therefore an explicit assumption, not an
   estimate. Do not let a simulator imply otherwise.
@@ -197,7 +241,8 @@ See [`docs/METHODS.md` §3–4](docs/METHODS.md#phase-3--parametric-layer).
 | [`docs/METHODS.md`](docs/METHODS.md) | **start here** — methods, results, decision log, reproducibility |
 | [`docs/competition-brief.md`](docs/competition-brief.md) | challenge framing (provided by the organisers) |
 
-The four generated diagnostics reports (`market_link_test.md`,
-`aggregate_link_test.md`, `retarget_test.md`, `p2p_vs_pax_test.md`) live in
-`outputs/` and are **gitignored**. Regenerate them with the diagnostics above; a
-clean clone will not have them.
+The six generated diagnostics reports (`market_link_test.md`,
+`aggregate_link_test.md`, `retarget_test.md`, `p2p_vs_pax_test.md`,
+`calendar_events_test.md`, `market_attribution_test.md`) live in `outputs/` and
+are **gitignored**. Regenerate them with the diagnostics above; a clean clone
+will not have them.
