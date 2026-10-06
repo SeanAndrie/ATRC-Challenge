@@ -133,6 +133,7 @@ REPORT_RETARGET = OUTPUTS / "retarget_test.md"
 REPORT_P2P_VS_PAX = OUTPUTS / "p2p_vs_pax_test.md"
 REPORT_CALENDAR = OUTPUTS / "calendar_events_test.md"
 REPORT_MARKET_ATTRIBUTION = OUTPUTS / "market_attribution_test.md"
+REPORT_MARKET_ORIGIN = OUTPUTS / "market_origin_validation_test.md"
 
 # OpenSky REST credentials, used by tools/fetch_opensky.py and the window-cost tool.
 CREDENTIALS = ROOT / "credentials.json"
