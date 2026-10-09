@@ -75,18 +75,10 @@ def _():
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
+    from pipeline import hybrid
     from pipeline.competition import load as cl
 
-    return cl, go, np, pd
-
-
-@app.cell
-def _():
-    # Part B needs LightGBM; Part A does not. Keep the import separate so the
-    # failure mode is "missing extra" rather than "the chain is broken too".
-    import lightgbm as lgb
-
-    return (lgb,)
+    return cl, go, hybrid, np, pd
 
 
 @app.cell
@@ -118,87 +110,21 @@ def _(flights):
 
 
 @app.cell
-def _(cl, intl_test, intl_train, pd):
-    # Flight supply aggregated to market (departure country) x month. "market" is
-    # the join key on both sides; departure country and guest nationality happen
-    # to share names for the 33 flight markets.
-    fa = cl.flights_monthly_agg().rename(columns={"Departure Country Name": "market"})
-    fa["market"] = fa["market"].str.upper().str.strip()
-    fa["ym_str"] = fa["ym"].astype(str)
-    # routes/airlines are carried for the model's supply features; the chain
-    # ignores them, and keeping one column list means both parts score identical
-    # rows.
-    fcols = [
-        "ym_str",
-        "market",
-        "Total_Seats",
-        "Total_PAX",
-        "Total_P2P",
-        "Total_Transfer",
-        "Total_Transit",
-        "routes",
-        "airlines",
-    ]
-
-    train_m = (
-        intl_train.groupby(["ym", "Nationality"], dropna=False)
-        .agg(Guests=("Guests_n", "sum"), NewArr=("New Arrivals_n", "sum"))
-        .reset_index()
+def _(hybrid):
+    # The single canonical build now lives in pipeline/hybrid.build_panels():
+    # same loaders, same join, and the structural assumption is stated in that
+    # docstring and in docs/METHODS.md section 4.5. This cell keeps the exact
+    # return contract the rest of the notebook unpacks.
+    fa, mkt_dtype, mon_dtype, panel, test_m, test_panel, train_m = (
+        hybrid.build_panels()
     )
-    train_m["market"] = train_m["Nationality"].str.upper().str.strip()
-    train_m["ym_str"] = train_m["ym"].astype(str)
-    train_m["month"] = train_m["ym"].dt.month
+    return fa, mkt_dtype, mon_dtype, panel, test_m, test_panel, train_m
 
-    # The test frame carries New Arrivals but no Guests (guest-nights cannot be
-    # scored out of sample), and its New Arrivals is numeric, not the '*' marker.
-    test_m = (
-        intl_test.assign(NewArr=pd.to_numeric(intl_test["New Arrivals"], errors="coerce"))
-        .groupby(["ym", "Nationality"], dropna=False)
-        .agg(NewArr=("NewArr", "sum"))
-        .reset_index()
-    )
-    test_m["market"] = test_m["Nationality"].str.upper().str.strip()
-    test_m["ym_str"] = test_m["ym"].astype(str)
-    test_m["month"] = test_m["ym"].dt.month
 
-    # THE STRUCTURAL ASSUMPTION, stated where it is made.
-    #
-    # This join asserts that flight departure country equals guest nationality.
-    # It does not. `fa.market` is Departure Country Name -- the last departure
-    # point before AUH -- while `train_m.market` is Nationality -- the guest's
-    # citizenship. An Indian national flying India -> Doha -> Abu Dhabi is
-    # Transfer/Transit on the first leg and P2P on the second, so their supply
-    # lands on QATAR and their demand lands on INDIA. P2P is computed per
-    # flight row, so stripping transfers does not remove this: it relocates
-    # connecting traffic onto the hub as if it originated there.
-    #
-    # This is falsifiable, and it is false. capture = NewArr / P2P exceeds 1.0 in
-    # five markets (CHINA 5.854, CANADA 2.288, USA 1.990, RUSSIA 1.527,
-    # FRANCE 1.220) -- more guests than terminating passengers, which is
-    # impossible under a valid join. About 903,000 guests cannot have arrived
-    # the way the pack files them. See pipeline/tests/test_market_attribution.py
-    # and docs/METHODS.md section 4.5.
-    #
-    # Consequences, and they differ sharply:
-    #   * Aggregate is defensible. The error is zero-sum across hub and spoke
-    #     markets and stationary over the fit window, so it cancels in the
-    #     national total. T5's -0.1% aggregate bias is real evidence.
-    #   * Market-level attribution is NOT defensible. Per-market outputs, the
-    #     simulator's market breakdown, and the seats_mult lever are all filed
-    #     to the wrong market.
-    #   * `capture` is a calibration coefficient between two differently
-    #     composed populations -- not a conversion probability.
-    #
-    # The pack cannot fix this: `Residence (groups)` is constant
-    # ("International", 100% of rows) and no flight-side residence field exists.
-    panel = train_m.merge(fa[fcols], on=["ym_str", "market"], how="inner")
-    test_panel = test_m.merge(fa[fcols], on=["ym_str", "market"], how="inner")
-
-    # Fixed category levels shared by train and test, so LightGBM's native
-    # categorical handling sees the same encoding on both sides.
-    mkt_dtype = pd.CategoricalDtype(sorted(panel["market"].unique()))
-    mon_dtype = pd.CategoricalDtype(list(range(1, 13)))
-    return fa, mkt_dtype, mon_dtype, panel, test_m, test_panel
+@app.cell
+def _(train_m):
+    train_m.head()
+    return
 
 
 @app.cell
@@ -215,8 +141,8 @@ def _(fa, flights, mo, panel, pd, test_m):
     lf_ok = bool(
         ((flights["lf_frac"] - flights["Total PAX_n"] / flights["Total Seats_n"]).abs() < 1e-9).all()
     )
-    alos_global = panel["Guests"].sum() / panel["NewArr"].sum()
 
+    alos_global = panel["Guests"].sum() / panel["NewArr"].sum()
     flight_markets = set(fa["market"].dropna().unique())
     hotel_markets = set(panel["market"].dropna().unique()) | set(
         test_m["market"].dropna().unique()
@@ -233,6 +159,7 @@ def _(fa, flights, mo, panel, pd, test_m):
         ],
         columns=["check", "expected", "pass"],
     )
+
     mo.vstack(
         [
             mo.md(
@@ -254,135 +181,36 @@ def _(fa, flights, mo, panel, pd, test_m):
 
 
 @app.cell
-def _(panel):
-    def fit_params(p, cap=5.0):
-        """Fit the chain's parameters on a market x month panel.
-
-        capture and ALOS are volume-weighted ratios (Σ New / Σ P2P, Σ Guests /
-        Σ New), so a large market is not outvoted by a small one.
-
-        `cap` bounds capture, default 5.0. The bound turns out to be
-        load-bearing and *helpful* to the baseline: CHINA's raw capture is
-        5.854, and that inflated value is partly fitting connecting traffic
-        filed under China rather than Chinese guests. Clipping it shrinks the
-        contaminated coefficient and improves out-of-sample accuracy -- the
-        uncapped chain scores 36.10% on T5 against 32.77% capped. So the capped
-        version is the stronger baseline and the fair comparison. Pass
-        `cap=None` to reproduce the decomposition.
-
-        capture is NOT a conversion probability. Because `market` conflates
-        departure country with nationality (see the panel join), it exceeds 1.0
-        in five markets, which a probability cannot. It is a calibration
-        coefficient between two differently composed populations.
-
-        This is the only implementation in the repo. Part B previously carried a
-        trimmed copy, which meant two definitions of the chain baseline in two
-        files; the parametric version is authoritative and the baseline is now
-        computed once, here.
-        """
-        g = p.groupby("market").agg(
-            New=("NewArr", "sum"), P2P=("Total_P2P", "sum"), G=("Guests", "sum")
-        )
-        capture = g["New"] / g["P2P"]
-        if cap is not None:
-            capture = capture.clip(upper=cap)
-
-        # Season is the P2P-weighted ratio of actual to capture-expected new
-        # arrivals for each calendar month, normalised to mean 1. It captures
-        # within-market monthly variation that seat supply alone does not.
-        tmp = p.merge(capture.rename("cap"), left_on="market", right_index=True)
-        num = tmp.groupby("month")["NewArr"].sum()
-        den = (tmp["Total_P2P"] * tmp["cap"]).groupby(tmp["month"]).sum()
-        season = num / den
-        season = season / season.mean()
-
-        alos = g["G"] / g["New"]
-        return {
-            "capture": capture,
-            "season": season,
-            "alos": alos,
-            "global_capture": p["NewArr"].sum() / p["Total_P2P"].sum(),
-            "global_alos": p["Guests"].sum() / p["NewArr"].sum(),
-        }
-
+def _(hybrid, panel):
+    # The canonical fit_params (and its cap semantics) now lives in
+    # pipeline/hybrid.py; the notebook and the simulator share one engine.
+    fit_params = hybrid.fit_params
     params = fit_params(panel)
     return fit_params, params
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
+@app.cell
+def _(mo, params):
     capture = params["capture"]
+
     mo.md(
-        f"\"\"
-    **Fitted parameters.** Global capture **{params['global_capture']:.3f}**
-    (new hotel arrivals per terminating passenger) and global ALOS
-    **{params['global_alos']:.3f}**.
+        f"""
+        **Fitted parameters**. Global capture {params["global_capture"]:.3f} (new hotel arrivals per terminating passenger) and global ALOS {params["global_alos"]:.3f}.
 
-    Capture spans **{capture.min():.3f}** to **{capture.max():.3f}** across the 33
-    flight markets (median {capture.median():.3f}) — the spread that makes a
-    single blended ratio indefensible. ALOS ranges
-    **{params['alos'].min():.2f}** to **{params['alos'].max():.2f}**.
+        Capture spans {capture.min():.3f} to {capture.max():.3f} across the 33 flight markets (median {capture.median():.3f}) - the spread that makes a single blended ratio indefensible. ALOS ranges {params["alos"].min():.2f} to {params["alos"].max():.2f}.
 
-    A Beta-binomial empirical-Bayes shrinker was tried first and rejected: the
-    between-market dispersion of capture exceeds the variance a Beta prior can
-    represent (the method-of-moments concentration goes negative), which is the
-    signature of real behavioural heterogeneity rather than small-sample noise.
-    The measured rate is therefore kept, with the cap as the only guard. Part B
-    reaches the same conclusion by a different route — the model's learned rate
-    is compared against this one in ML-5.
-    "\"\"
+        A Beta-binomial empirical-Bayes shrinker was tried first and rejected: the between-market dispersion of capture exceeds the variance of Beta prior can represent (the method-of-moments concentraion goes negative), which is the signature of real behavioural heterogeneity rather than small-sample noise. The measured rate is therefore kept, with the cap as the only guard. Part B reaches the same conclusion by a different route - the model's learned rate is compared against this one in ML-5. 
+        """
     )
-    """)
     return
 
 
 @app.cell
-def _(np):
-    def simulate(
-        p,
-        params,
-        seats_mult=1.0,
-        lf_mult=1.0,
-        p2p_mult=1.0,
-        capture_mult=1.0,
-        alos_mult=1.0,
-        season_mult=1.0,
-    ):
-        """Apply the chain to a market x month panel.
-
-        Every stage writes its own column so the waterfall is auditable. Default
-        multipliers are 1.0, which reproduces the measured seat, PAX and P2P
-        values exactly and produces the model's New Arrivals and Guest-nights.
-
-        Part B previously carried a no-lever stub that skipped the supply
-        arithmetic. It was arithmetically identical to this function at unit
-        multipliers — PAX = Seats × (PAX/Seats) = PAX, P2P = PAX × (P2P/PAX) =
-        P2P — so the stub was deleted rather than kept in sync.
-        """
-        out = p.copy()
-        seats = out["Total_Seats"] * seats_mult
-        lf = (out["Total_PAX"] / out["Total_Seats"]) * lf_mult
-        out["PAX"] = seats * lf
-        p2p_share = (out["Total_P2P"] / out["Total_PAX"]) * p2p_mult
-        out["P2P"] = out["PAX"] * p2p_share
-        out["NewArrivalHat"] = (
-            out["P2P"]
-            * out["market"].map(params["capture"])
-            * out["month"].map(params["season"])
-            * capture_mult
-        )
-        out["GuestNightsHat"] = (
-            out["NewArrivalHat"] * out["market"].map(params["alos"]) * alos_mult
-        )
-        return out
-
-    def wmape(actual, pred):
-        """Weighted mean absolute percentage error, the brief's metric."""
-        actual = np.asarray(actual, dtype=float)
-        pred = np.asarray(pred, dtype=float)
-        return 100.0 * np.abs(actual - pred).sum() / np.abs(actual).sum()
-
+def _(hybrid):
+    # Canonical simulate / wmape live in pipeline/hybrid.py (this cell used to
+    # define them; the extraction is byte-for-byte identical).
+    simulate = hybrid.simulate
+    wmape = hybrid.wmape
     return simulate, wmape
 
 
@@ -403,6 +231,7 @@ def _(mo):
 def _(np, panel, params, pd, simulate):
     # T2 chain arithmetic: with unit levers the first three stages reproduce the
     # measured values exactly, and the last two are the model's only estimates.
+
     out = simulate(panel, params)
     paxt_err = float(np.abs(out["PAX"] - panel["Total_PAX"]).max())
     p2p_err = float(np.abs(out["P2P"] - panel["Total_P2P"]).max())
@@ -558,7 +387,7 @@ def _(params, pd, simulate, test_panel, wmape):
     return actual_total, pred_total, score, test_new
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(actual_total, mo, pred_total, score, test_new, test_panel):
     mo.md(f"""
     **T5 — competition test window** (2025-08 → 2026-02,
@@ -585,7 +414,17 @@ def _(actual_total, mo, pred_total, score, test_new, test_panel):
 
 
 @app.cell
-def _(fit_params, fit_panel, holdout, mo, panel, pd, simulate, test_panel, wmape):
+def _(
+    fit_panel,
+    fit_params,
+    holdout,
+    mo,
+    panel,
+    pd,
+    simulate,
+    test_panel,
+    wmape,
+):
     # Cap decomposition. The chain's 5.0 capture clip is load-bearing, and the
     # direction is the opposite of what the misattribution defect alone would
     # suggest: CHINA's raw capture of 5.854 is partly fitting connecting traffic
@@ -594,6 +433,7 @@ def _(fit_params, fit_panel, holdout, mo, panel, pd, simulate, test_panel, wmape
     # baseline out of sample. The capped chain is therefore the stronger, fairer
     # baseline, and this cell exists so the hybrid's headline gap is measured
     # against the best version of the chain rather than a deflated one.
+
     raw = panel.groupby("market").agg(New=("NewArr", "sum"), P2P=("Total_P2P", "sum"))
     raw_capture = raw["New"] / raw["P2P"]
     clipped = raw_capture[raw_capture > 5.0]
@@ -643,7 +483,7 @@ def _(fit_params, fit_panel, holdout, mo, panel, pd, simulate, test_panel, wmape
     against both variants so it is measured against the best chain, not a
     deflated one.
     """)
-    return cap_tbl, raw_capture, cap_delta
+    return cap_delta, cap_tbl
 
 
 @app.cell
@@ -757,7 +597,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## The event calendar
@@ -802,7 +642,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo, pd):
+def _(mo):
     from pipeline.calendar_events import (
         COVERED_FROM,
         COVERED_TO,
@@ -829,145 +669,29 @@ def _(mo, pd):
         "sighting variation; 2025's Ramadan is the one year that spread further\n"
         "across the region, and its window is deliberately wider for that reason."
     )
-    return COVERED_FROM, COVERED_TO, FEATURE_COLUMNS, monthly_features
+    return FEATURE_COLUMNS, monthly_features
 
 
 @app.cell
-def _(FEATURE_COLUMNS, mkt_dtype, mon_dtype, monthly_features, np, panel, pd):
-    def featurize(df, events=True):
-        """Leak-free features: only supply, calendar and market, all known for
-        the competition test window. No target-derived quantity is used, so a
-        prediction can be made without ever seeing New Arrivals.
-
-        `events=False` drops the four calendar features and is used only by ML-7,
-        to measure what the event calendar is worth. Everything else — T2, the
-        chain in Part A, ML-2 to ML-6 — uses the default `events=True`.
-        """
-        x = pd.DataFrame(index=df.index)
-        x["market"] = df["market"].astype(mkt_dtype)
-        x["month"] = df["month"].astype(mon_dtype)
-        ym = pd.PeriodIndex(df["ym_str"], freq="M")
-        x["t"] = ym.year * 12 + ym.month - (2022 * 12 + 1)
-        x["log_seats"] = np.log1p(df["Total_Seats"])
-        x["load_factor"] = df["Total_PAX"] / df["Total_Seats"]
-        x["p2p_share"] = df["Total_P2P"] / df["Total_PAX"]
-        x["transfer_share"] = (df["Total_Transfer"] + df["Total_Transit"]) / df["Total_PAX"]
-        x["routes"] = df["routes"].astype(float)
-        x["airlines"] = df["airlines"].astype(float)
-        if events:
-            # Daily windows already aggregated to monthly day counts, clipped to
-            # the month. A 9-day Eid reads as 9, and as 5 + 4 when it straddles
-            # a boundary, rather than collapsing to a single bit.
-            ev = monthly_features(ym)
-            for col in FEATURE_COLUMNS:
-                x[col] = ev[col].to_numpy().astype(np.float32)
-        return x
-
-    cats = ["market", "month"]
-
-    # Feature counts are pinned so a silently dropped or duplicated column fails
-    # loudly: 9 without the calendar, 13 with it.
-    assert featurize(panel.head(3), events=True).shape[1] == 13, (
-        "expected 13 features with events"
-    )
-    assert featurize(panel.head(3), events=False).shape[1] == 9, (
-        "expected 9 features without events"
-    )
+def _(hybrid):
+    # The canonical featurize (and its in-function 13/9 feature-count asserts)
+    # lives in pipeline/hybrid.py; the categorical encodings it needs are set by
+    # build_panels().
+    cats = hybrid.cats
+    featurize = hybrid.featurize
     return cats, featurize
 
 
 @app.cell
-def _(cats, featurize, lgb, np):
-    # One a-priori configuration, not tuned on the reported holdouts: shallow
-    # trees, high min_child_samples, L2, row/feature subsampling, single thread,
-    # fixed seeds. Iteration count is chosen by early stopping on an internal
-    # 6-month tail of the fit window, then the ensemble is refit on the full fit
-    # window.
-    base = dict(
-        objective="poisson",
-        num_leaves=15,
-        min_child_samples=20,
-        learning_rate=0.03,
-        feature_fraction=0.8,
-        bagging_fraction=0.8,
-        bagging_freq=1,
-        lambda_l2=1.0,
-        num_threads=1,
-        deterministic=True,
-        force_row_wise=True,
-        verbose=-1,
-    )
-    seeds = [0, 1, 2, 42, 2024]
-
-    def _ds(df, feats, off, ref=None):
-        d = lgb.Dataset(
-            feats,
-            label=df["NewArr"].to_numpy(dtype=float),
-            init_score=off,
-            categorical_feature=cats,
-            reference=ref,
-            free_raw_data=False,
-        )
-        d.set_init_score(off)
-        return d
-
-    def fit_poisson(train_iter, valid, max_rounds=2000, events=True):
-        """Early-stopping pass on the internal tail; returns best_iteration."""
-        off_tr = np.log(train_iter["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        off_v = np.log(valid["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        d = _ds(train_iter, featurize(train_iter, events), off_tr)
-        dv = _ds(valid, featurize(valid, events), off_v, ref=d)
-        p = dict(base)
-        p["seed"] = seeds[0]
-        b = lgb.train(
-            p,
-            d,
-            num_boost_round=max_rounds,
-            valid_sets=[dv],
-            callbacks=[lgb.early_stopping(100, verbose=False)],
-        )
-        return b.best_iteration
-
-    def predict_poisson(train_final, test, best_iter, events=True):
-        """Multi-seed ensemble on the rate scale: each seed's raw score is
-        exponentiated with the exposure offset, and the resulting per-passenger
-        intensities are averaged. Averaging the raw scores instead would average
-        log-intensities, which is a different (geometric-mean) estimator."""
-        Xtr = featurize(train_final, events)
-        Xte = featurize(test, events)
-        off_tr = np.log(train_final["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        off_te = np.log(test["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        preds = []
-        for s in seeds:
-            p = dict(base)
-            p["seed"] = s
-            b = lgb.train(p, _ds(train_final, Xtr, off_tr), num_boost_round=best_iter)
-            preds.append(np.exp(b.predict(Xte, raw_score=True) + off_te))
-        return np.mean(preds, axis=0), preds
-
-    def train_model(df, n_rounds, seed=0):
-        X = featurize(df)
-        off = np.log(df["Total_P2P"].clip(lower=1).to_numpy(dtype=float))
-        p = dict(base)
-        p["seed"] = seed
-        return lgb.train(p, _ds(df, X, off), num_boost_round=n_rounds)
-
-    def fit_alos(train, test):
-        """Guest-nights are New Arrivals x length of stay. This learns log-ALOS
-        from the same features; the alternative is the chain's ALOS[m]."""
-        tr = train[(train["NewArr"] > 0) & (train["Guests"] > 0)]
-        Xtr = featurize(tr)
-        Xte = featurize(test)
-        ytr = np.log(tr["Guests"].to_numpy(dtype=float) / tr["NewArr"].to_numpy(dtype=float))
-        preds = []
-        for s in seeds:
-            p = dict(base)
-            p["objective"] = "regression"
-            p["seed"] = s
-            b = lgb.train(p, lgb.Dataset(Xtr, label=ytr, categorical_feature=cats), num_boost_round=300)
-            preds.append(np.exp(b.predict(Xte)))
-        return np.mean(preds, axis=0)
-
+def _(hybrid):
+    # The canonical fitters (base config, seeds, _ds, fit_poisson,
+    # predict_poisson, train_model, fit_alos) were extracted verbatim to
+    # pipeline/hybrid.py, so the notebook's ML-2..ML-7 numbers and Part C pins
+    # now assert against the exactly-scored packaged code the simulator uses.
+    fit_alos = hybrid.fit_alos
+    fit_poisson = hybrid.fit_poisson
+    predict_poisson = hybrid.predict_poisson
+    train_model = hybrid.train_model
     return fit_alos, fit_poisson, predict_poisson, train_model
 
 
@@ -978,6 +702,7 @@ def _(fit_panel, holdout):
     # nested tails for early stopping, never the holdout itself as a training set.
     core = fit_panel[fit_panel["ym"] <= "2024-07"]
     val = fit_panel[fit_panel["ym"] > "2024-07"]
+
     # T5's iteration-selection window is the same pair one year later: train
     # through 2025-01, validate on the T4 holdout months.
     val5 = holdout
@@ -1022,7 +747,7 @@ def _(
     a single seed.
     """
     )
-    return (best_iter_t4, ml_ho_new, ml_ho_lo, ml_ho_hi, pred_ho)
+    return best_iter_t4, ml_ho_hi, ml_ho_lo, ml_ho_new, pred_ho
 
 
 @app.cell
@@ -1097,7 +822,7 @@ def _(
     misfiled between markets. See the panel join and section 4.5.
     """
     )
-    return (best_iter_t5, ml_t5_bias, ml_t5_new, ml_t5_lo, ml_t5_hi)
+    return best_iter_t5, ml_t5_bias, ml_t5_hi, ml_t5_lo, ml_t5_new
 
 
 @app.cell
@@ -1123,7 +848,7 @@ def _(fit_alos, fit_panel, ho, ho_guest, mo, params_holdout, pred_ho, wmape):
     {ho['Guests'].sum() / ho['NewArr'].sum():.2f}.
     """
     )
-    return (w_ml, w_chain)
+    return (w_ml,)
 
 
 @app.cell
@@ -1296,12 +1021,12 @@ def _(
     ins_guest,
     ins_new,
     lf_ok,
-    ml_ho_new,
-    ml_ho_lo,
     ml_ho_hi,
+    ml_ho_lo,
+    ml_ho_new,
     ml_t5_bias,
-    ml_t5_lo,
     ml_t5_hi,
+    ml_t5_lo,
     ml_t5_new,
     mo,
     pred_total,
@@ -1372,7 +1097,7 @@ def _(
     cannot silently tell a different story.
     """
     )
-    return (abl_summary,)
+    return
 
 
 @app.cell(hide_code=True)

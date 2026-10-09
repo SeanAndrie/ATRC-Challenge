@@ -131,6 +131,8 @@ weight. The seven success criteria map to the work as follows:
 | 2026-10-03 | Parametric layer + tests | Part A of `notebooks/hybrid_layer.py` |
 | 2026-10-03 | Hybrid ML layer (LightGBM) + tests | Part B of `notebooks/hybrid_layer.py` |
 | 2026-10-05 | Phase 3 and 4 merged into one notebook; OpenSky puller moved to `tools/fetch_opensky.py` | `notebooks/hybrid_layer.py` |
+| 2026-10-06 | Origin mix validated against SCAD's official embarkation table; region-level gap pinned | `pipeline/aviation/scad_region_arrivals.py`, `test_market_origin_validation.py` |
+| 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py`, `test_simulator_package.py` |
 
 The repository has a single commit (`Initial commit: ATRC Abu Dhabi
 flight-to-hotel analysis`); the working tree carries the Phase 2–4 work. Raw data
@@ -149,7 +151,9 @@ pipeline/dct/      DCT PDF parsing, by report era
 pipeline/aviation/ passenger, SCAD and ADS-B builders
 pipeline/competition/  competition-pack loader + audit
 pipeline/hotel_supply.py
-pipeline/tests/    eight standalone diagnostics
+pipeline/hybrid.py            canonical chain + LightGBM layer (shared by notebook and simulator)
+pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
+pipeline/tests/    nine standalone diagnostics
 notebooks/         three marimo notebooks
 docs/              METHODS.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
@@ -672,6 +676,7 @@ Script column above names the generator.
 | 2026-10-05 | Capped chain confirmed as the *stronger* baseline (32.77% vs 36.10% uncapped); headline gap kept at the conservative 12.21 pp | [§4.6](#46-the-capture-cap-helps-the-baseline) |
 | 2026-10-05 | No attempt made to re-derive the supply→nationality mapping; not identifiable from this pack without residence data | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
 | 2026-10-06 | Origin mix validated against SCAD's official region-of-embarkation table (KTS 2025 t.6): pack files last-flight, not true embarkation (GCC +5–7 pp every year); no coarser region grouping rescues market-level attribution | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
+| 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model; packaging pinned by a ninth diagnostic | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 
 ---
 
@@ -772,6 +777,7 @@ uv sync
 .venv/bin/python pipeline/tests/test_calendar_events.py
 .venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets; see METHODS 4.5
 .venv/bin/python pipeline/tests/test_market_origin_validation.py  # pack region mix vs SCAD embarkation mix; see METHODS 4.5
+.venv/bin/python pipeline/tests/test_simulator_package.py    # packaging gate; re-fits the simulator, writes no report
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 cd data/processed && md5sum -c checksums.md5
 ```
@@ -783,6 +789,10 @@ the Part C assertions guard every pinned number for both models):**
 .venv/bin/python -m marimo export html --no-include-code notebooks/hybrid_layer.py \
   -o /tmp/hybrid_layer.html
 ```
+
+The model cells of the notebook delegate to `pipeline/hybrid.py` (see the
+Simulator package subsection below), so this export *is* the canonical model and
+the simulator scores the same numbers.
 
 This trains 30 LightGBM models: a seed-0 early-stopping pass plus a five-seed
 refit for T4 and T5 (12), the same pair of arms again for the ML-7 ablation (12),
@@ -797,6 +807,40 @@ own is fast, but there is no way to skip Part B from inside the app.
 > `calendar_events_test.md`, `market_attribution_test.md`,
 > `market_origin_validation_test.md`) are gitignored, so a
 > clean clone must regenerate them before reading.
+
+### Simulator package (`pipeline/hybrid.py` + `pipeline/simulator.py`)
+
+The notebook is the submission; the imported package is how a simulator consumes
+it. `pipeline/hybrid.py` is the **single canonical implementation** — the
+notebook's Part A/B cells now delegate to it (thin cells that bind the same
+names), so the notebook's pinned Part C numbers *are* the packaged model's
+numbers, and `test_simulator_package.py` re-fits the package and pins it again
+(for the T5 competition window, WMAPE within `20.8 ± 2.0` with aggregate bias
+near `-0.1%`). Runtime is ~2 minutes: the test fits both ensembles once.
+
+```
+from pipeline.simulator import Simulator, Scenario, RouteEdit
+sim = Simulator().fit()
+sim.monthly(Scenario(seats_mult=1.2))       # safe aggregate view
+sim.market(Scenario(seats_mult=1.2))        # market view, supply-side-only flag
+```
+
+Lever semantics are documented in the `simulator.py` docstring: the three
+supply levers re-enter the model's features *and* its Poisson exposure offset
+pre-score (so the hybrid responds non-linearly); `capture_mult`, `season_mult`
+and `alos_mult` are post-hoc dials. Simulation is bounded by the model's own
+world: markets are a fixed 33-level categorical (new markets and
+out-of-horizon route edits raise), and the horizon stops at the event
+calendar's `COVERED_TO` = 2026-02. Because the §4.5 join is structurally wrong
+at market level, `market()` returns rows flagged
+`attrs["data_status"] == "supply-side-only"` and the UI must not present market
+levels as measured; the aggregate views are the defaults for a reason.
+
+The Streamlit front end (`app/simulator.py`) is deliberately left as a stub for
+a UI contributor; the model side is complete, deterministic
+(`deterministic=True`, fixed seeds, single thread) and fit-on-demand from the
+competition pack — no artifact is required, and predictions are identical to
+the notebook's.
 
 ---
 
@@ -822,13 +866,17 @@ that spends credits), `tools/export_omaa_csv.py`,
 `pipeline/aviation/` (4 builders + `scad_region_arrivals.py` parser and
 country→region mapping), `pipeline/competition/` (loader + audit),
 `pipeline/hotel_supply.py`, `pipeline/calendar_events.py` (UAE event calendar,
-§4.3), `pipeline/paths.py`, `pipeline/tests/` (8 diagnostics).
+§4.3), `pipeline/hybrid.py` (canonical chain + LightGBM layer, shared with the
+notebook), `pipeline/simulator.py` (`Scenario`/`Simulator` API for the app),
+`pipeline/paths.py`, `pipeline/tests/` (9 diagnostics).
 
 **Docs:** [`../README.md`](../README.md) (entry point), this file
 ([`METHODS.md`](METHODS.md)), [`competition-brief.md`](competition-brief.md)
 (supplied by the organisers), and the seven generated reports in `outputs/`.
 
-**App:** `app/simulator.py` is a 7-line Streamlit stub, not yet built out.
+**App:** `app/simulator.py` is a Streamlit stub, not yet built out by a UI
+contributor. The model side it will call — `pipeline/simulator.py` — is
+complete and guarded; see the Simulator package subsection under Reproducibility.
 
 ---
 
@@ -845,20 +893,24 @@ country→region mapping), `pipeline/competition/` (loader + audit),
    market. Attempting to infer the mapping from the pack alone is not
    identifiable: a 33×45 origin-to-nationality matrix on 1,405 rows has more
    parameters than data.
-2. **Build the interactive simulator**, aggregate-only until (1) resolves. The
-   chain exists in Part A of `notebooks/hybrid_layer.py`; the Streamlit/FastAPI
-   front end that exposes the six levers and renders by season does not. Its
-   market breakdown and `seats_mult` lever must be withheld or explicitly labelled
-   supply-side-only until attribution is fixed.
+2. **Build the interactive front end**, aggregate-only until (1) resolves. The
+   chain, the hybrid, and the scenario API are done: `pipeline/hybrid.py` is the
+   canonical model the notebook also delegates to, and `pipeline/simulator.py`
+   exposes `Scenario`/`Simulator` (six levers, route edits, fit-on-demand, a
+   `reproduce_competition_window()` pin replays) with
+   `test_simulator_package.py` guarding it. What does not exist is the
+   Streamlit/FastAPI skin over `app/simulator.py` that renders by month and
+   season. Its market breakdown and `seats_mult` lever must be withheld or
+   explicitly labelled supply-side-only until attribution is fixed.
 3. **Measure capture for the 52 air-only origins.** OpenSky data is present in
    `data/raw/opensky/` but unconsumed; this would extend the chain beyond the 33
    matched markets. Re-pulling requires `tools/fetch_opensky.py` and spends
    credits. Note this extends *supply* coverage and does nothing for the
    attribution defect.
 4. **Market-specific seasonality** once more than 43 months are available.
-5. **Serve the ML layer.** The hybrid is currently notebook-only; wire it in
-   behind the simulator/API so the learned capture can drive day-to-day planning,
-   not just the report.
+5. **Serve the ML layer.** Done: `Simulator().fit()` trains the hybrid end to
+   end from the pack and `monthly()`/`market()` score scenarios with the learned
+   capture; the remaining work is the UI that exposes it (item 2).
 6. **Test-frame scoring beyond New Arrivals** is impossible without `Guests`; note
    it explicitly in the submission.
 7. **Source-market public holidays.** The brief asks for them and the pack shipped

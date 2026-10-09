@@ -33,7 +33,9 @@ pipeline/dct/      DCT PDF parsing, by report era
 pipeline/aviation/ passenger and ADS-B builders
 pipeline/hotel_supply.py
 pipeline/calendar_events.py   UAE event calendar (Ramadan, Eid, National Day, NYE)
-pipeline/tests/    eight standalone diagnostics
+pipeline/hybrid.py            canonical chain + LightGBM layer (notebook and simulator share it)
+pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
+pipeline/tests/    nine standalone diagnostics
 notebooks/         three marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
@@ -88,6 +90,7 @@ in particular is quota-limited and may not be repeatable.
 .venv/bin/python pipeline/tests/test_calendar_events.py
 .venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets
 .venv/bin/python pipeline/tests/test_market_origin_validation.py   # pack region mix vs SCAD embarkation mix
+.venv/bin/python pipeline/tests/test_simulator_package.py   # packaging gate; writes no report
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 ```
 
@@ -98,6 +101,30 @@ December 2017 DCT report states 4,875,499 guests, and the parsed months sum to
 
 The diagnostics write into `outputs/`. Each report is written fresh by its
 script on every run and is gitignored; the commands above name the generators.
+`test_simulator_package.py` is the ninth diagnostic but writes no report: it
+re-fits the packaged model and pins it to the notebook's numbers, so the
+simulator cannot silently drift from the deliverable.
+
+## Streamlit simulator
+
+The parametric chain and the hybrid layer are packaged as an importable API for
+the interactive front end. `app/simulator.py` is a stub the UI contributor
+builds on; the model side is ready and guarded:
+
+```python
+from pipeline.simulator import Simulator, Scenario
+sim = Simulator().fit()                       # fits the full + competition models
+sim.monthly(Scenario(seats_mult=1.2))         # aggregate view — safe by default
+sim.market(Scenario(seats_mult=1.2))          # market view — flagged supply-side-only
+```
+
+Supply levers (`seats_mult`, `lf_mult`, `p2p_mult`) rewrite the supply frame, so
+the hybrid's features and Poisson exposure respond non-linearly;
+`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. Because of the
+market-join defect in §4.5, `market()` rows carry
+`attrs["data_status"] == "supply-side-only"` and scenarios cannot invent new
+markets or run past the event calendar's 2026-02 horizon. See
+[`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility).
 
 ## Notebooks
 
@@ -214,7 +241,7 @@ in sign, small. Source-market public holidays are still not covered; see
 
 | # | Criterion | Where |
 | --- | --- | --- |
-| 01 | Working simulator, not a report | `notebooks/hybrid_layer.py` Part A (levers/charts); `app/simulator.py` stub |
+| 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` stub |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
@@ -231,12 +258,15 @@ in sign, small. Source-market public holidays are still not covered; see
   residence/nationality on the flight side, or all output must be re-scoped to
   aggregate — which costs success criteria 01, 05 and 06. See
   [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
-- **Simulator, aggregate-only until attribution resolves.** The chain and the
-  learned layer both exist in `notebooks/hybrid_layer.py`; the interactive front
-  end that exposes the levers and renders by season does not. Its market
-  breakdown and `seats_mult` lever must be withheld or labelled supply-side-only.
-- **Serve the ML layer** behind that front end so the learned capture drives
-  planning, not just the report.
+- **Simulator ready; only the UI remains.** The chain and the learned layer are
+  packaged behind one API in `pipeline/hybrid.py` + `pipeline/simulator.py`
+  (`Scenario`/`Simulator`, six levers, route edits, an attribution guard), and
+  the notebook now delegates to the same code. The interactive front end on top
+  of `app/simulator.py` does not exist yet. Its market breakdown and
+  `seats_mult` lever must be withheld or labelled supply-side-only.
+- **Serve the ML layer.** Done for planning use: `Simulator().fit()` trains the
+  hybrid end to end and `market()`/`monthly()` score scenarios with the learned
+  capture; the remaining work is the UI that exposes it.
 - **52 air-only origins** have no measured hotel capture rate. OpenSky data in
   `data/raw/opensky/` is intended to close this and is not yet consumed; it is
   pulled by `tools/fetch_opensky.py`, which spends credits and so has not been
