@@ -5,46 +5,53 @@ parametric chain *and* the hybrid LightGBM layer behind one small class, so the
 UI needs only::
 
     from pipeline.simulator import Simulator, Scenario
-    sim = Simulator().fit()
-    sim.monthly(Scenario(seats_mult=1.2))      # safe aggregate view
-    sim.market(Scenario(seats_mult=1.2))       # market view, flagged supply-side
+    sim = Simulator().fit()                     # trains the requested window
+    sim.monthly(Scenario(seats_mult=1.2))       # safe aggregate view
+    sim.market(Scenario(seats_mult=1.2))        # market view, supply-side-only
 
-Two models are fitted lazily by ``fit()``:
+Fitting is lazy and per-window. ``Simulator(window=...)`` chooses which model
+default scenarios are scored with, and ``fit()`` trains **only that window**:
 
 * ``"full"`` -- the default scenario model. Iteration count is chosen on the
   internal last-6-month tail (the notebook's T4 protocol), then the 5-seed
   ensemble is refit on the whole training panel (2022-01..2025-07). Scenarios
-  therefore fly the model forward over any month the pack covers
-  (up to ``COVERED_TO`` = 2026-02).
+  therefore fly the model forward over any month the pack covers (up to
+  ``COVERED_TO`` = 2026-02).
 * ``"competition"`` -- the T5 protocol (iterations on the leave-tail holdout).
-  ``reproduce_competition_window`` replays it to surface the pinned numbers
-  live.
+  ``reproduce_competition_window`` trains it on demand and replays the pinned
+  numbers live.
 
-``window`` selects which model ``predict`` uses on a scenario, default ``"full"``.
+A fitted simulator can be cached with ``save()`` / ``load()`` (pickled to
+``outputs/models/``, gitignored). No artifact is required -- the fit-on-demand
+path is deterministic and yields identical predictions -- so the cache is purely
+to spare the ~2-minute fit on a Streamlit restart.
 
 Lever semantics
 
 * Supply levers (``seats_mult``, ``lf_mult``, ``p2p_mult``) act *pre-model*:
   they rewrite the supply frame, so the hybrid's features (``log_seats``,
   ``load_factor``, ``p2p_share``, ``routes``, ``airlines``) *and* its Poisson
-  exposure offset respond non-linearly. That is the feature, not a bug.
+  exposure offset respond non-linearly. That is the feature, not a bug. They must
+  be positive; a zeroed supply lever is rejected rather than silently degenerated.
 * ``capture_mult``, ``season_mult``, ``alos_mult`` are post-hoc dials on the
   model output: they scale New Arrivals (capture, season) and guest-nights
-  (ALOS) without touching the learned features. In the chain path the same
-  three are passed to ``hybrid.simulate`` (whose ``season_mult`` is a documented
-  no-op there) and ``season_mult`` is applied as a demand-level override
-  afterwards, so both paths honour every dial.
-* ``market_seats_mult`` scales a single market's seats on top of the global
-  ``seats_mult`` (it is a per-market multiplier, not a cap).
+  (ALOS) without touching the learned features. In the chain path the same three
+  apply, so both paths honour every dial.
+* ``market_seats_mult`` is a tuple of ``(market, multiplier)`` pairs that scale a
+  single market on top of the global ``seats_mult`` (a per-market multiplier,
+  not a cap); unknown market names and non-positive values are rejected. A tuple
+  keeps ``Scenario`` genuinely immutable.
 * ``RouteEdit`` appends terminating supply for an existing market from a start
   month onward (a new route, or extra seats on an existing market), with PAX/P2P
   estimated at the market's average load factor and P2P share.
 
 Attribution guard (docs/METHODS.md §4.5)
 
-* Aggregate views (``monthly``, ``seasonal``) are the defaults and are valid.
-* ``market`` carries ``frame.attrs["data_status"] == "supply-side-only"`` and a
-  constant warning column; the UI must not present market levels as measured.
+* Aggregate views (``monthly``, ``seasonal``) are the safe defaults.
+* Market-level frames carry both ``frame.attrs["data_status"]`` and a constant
+  ``data_status`` column (``"supply-side-only"``), so the flag survives
+  ``groupby`` and serialization; the UI must not present market levels as
+  measured.
 * Scenarios cannot invent new markets (the model's ``market`` categorical is a
   fixed 33-level encoding) and cannot start supply past ``COVERED_TO`` = 2026-02
   (the event calendar's horizon); both produce clear errors.
@@ -52,8 +59,9 @@ Attribution guard (docs/METHODS.md §4.5)
 
 from __future__ import annotations
 
+import pickle
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +72,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pipeline import hybrid as H  # noqa: E402
+from pipeline import paths  # noqa: E402
 from pipeline.calendar_events import COVERED_FROM, COVERED_TO  # noqa: E402
 from pipeline.competition import load as cl  # noqa: E402
 
@@ -76,6 +85,8 @@ LEVER_BOUNDS = {
     "alos_mult": (0.9, 1.1, 0.01),
     "season_mult": (0.9, 1.1, 0.01),
 }
+
+SUPPLY_LEVERS = ("seats_mult", "lf_mult", "p2p_mult")
 
 
 @dataclass(frozen=True)
@@ -102,7 +113,7 @@ class Scenario:
     capture_mult: float = 1.0
     alos_mult: float = 1.0
     season_mult: float = 1.0
-    market_seats_mult: dict = field(default_factory=dict)
+    market_seats_mult: tuple = ()  # ((market, multiplier), ...)
     routes: tuple = ()
 
 
@@ -113,65 +124,74 @@ class Simulator:
         if window not in ("full", "competition"):
             raise ValueError(f"window must be 'full' or 'competition', got {window!r}")
         self.window = window
-        self._fit_done = False
+        self._data_ready = False
         self.fa = None
         self.panel = None
         self.test_panel = None
         self.params = None
-        self._full_boosters = None
-        self._comp_boosters = None
-        self._best_iter_full = None
-        self._best_iter_comp = None
-        self._monthly = None
+        self._base_routes = None
+        self._boosters = {"full": None, "competition": None}
+        self._best_iter = {"full": None, "competition": None}
 
     # -- fitting -------------------------------------------------------------
     def fit(self) -> "Simulator":
-        """Fit both models once. Idempotent; returns self for chaining."""
-        if self._fit_done:
+        """Load the pack and train the requested window. Idempotent."""
+        self._ensure_data()
+        self._ensure(self.window)
+        return self
+
+    def _ensure_data(self) -> "Simulator":
+        """Load panels, fit the chain, and cache the base supply. Once."""
+        if self._data_ready:
             return self
-
         fa, _mkt_dtype, _mon_dtype, panel, _test_m, test_panel, _train_m = H.build_panels()
-        holdout = panel[panel["ym"] > "2025-01"].copy()
-
-        # Full window: iterations on the internal last-6-month tail (T4 protocol).
-        core_full = panel[panel["ym"] <= "2024-07"]
-        val_full = panel[panel["ym"] > "2024-07"]
-        self._best_iter_full = H.fit_poisson(core_full, val_full)
-        self._full_boosters = H.fit_hybrid(panel, self._best_iter_full)
-
-        # Competition window: iterations on the leave-tail holdout (T5 protocol),
-        # ensemble refit on the full panel for maximum training signal.
-        core_comp = panel[panel["ym"] <= "2025-01"]
-        self._best_iter_comp = H.fit_poisson(core_comp, holdout)
-        self._comp_boosters = H.fit_hybrid(panel, self._best_iter_comp)
-
         self.fa = fa
         self.panel = panel
         self.test_panel = test_panel
         self.params = H.fit_params(panel)
-        self._monthly = cl.flights_monthly()
-        self._fit_done = True
+        self._base_routes = self._build_base_routes()
+        self._data_ready = True
         return self
 
-    def _require_fit(self):
-        if not self._fit_done:
-            raise RuntimeError("Simulator.fit() must be called before prediction")
+    def _ensure(self, window: str) -> None:
+        """Train ``window`` once, on demand. Only that window is ever fitted."""
+        if self._boosters[window] is not None:
+            return
+        self._ensure_data()
+        if window == "full":
+            # Iterations on the internal last-6-month tail (T4 protocol).
+            core, val = self.panel[self.panel["ym"] <= "2024-07"], self.panel[
+                self.panel["ym"] > "2024-07"
+            ]
+        else:
+            # Iterations on the leave-tail holdout (T5 protocol).
+            core, val = self.panel[self.panel["ym"] <= "2025-01"], self.panel[
+                self.panel["ym"] > "2025-01"
+            ]
+        best = H.fit_poisson(core, val)
+        self._best_iter[window] = best
+        self._boosters[window] = H.fit_hybrid(self.panel, best)
+
+    def _require_data(self) -> None:
+        if not self._data_ready:
+            raise RuntimeError(
+                "Simulator.fit() (or Simulator.load()) must be called before use"
+            )
 
     # -- scenario scoring ----------------------------------------------------
-    def predict(self, scenario: Scenario, markets: str | list[str] | None = "all"):
-        """Market-month predictions under ``scenario``.
+    def _predict(self, scenario: Scenario, markets: str | list[str] | None = "all"):
+        """Market-month predictions under ``scenario`` (low level; prefer the
+        ``monthly`` / ``seasonal`` / ``market`` views).
 
-        Returns a frame with ``ym_str, ym, market, month, routes, airlines,
-        Total_Seats, PAX, P2P, NewArrivalHat, GuestNightsHat``. Market-level rows
-        are attributed on the ``market`` join and are supply-side-only, so the
-        frame carries ``attrs["data_status"] = "supply-side-only"``.
+        Frames carry ``data_status="supply-side-only"`` as both a column and an
+        attr, because the ``market`` join is structurally wrong (METHODS §4.5).
         """
-        self._require_fit()
-        boosters = self._full_boosters if self.window == "full" else self._comp_boosters
+        self._ensure(self.window)
+        self._require_data()
         scaled, _raw = self._scenario_supply(scenario)
         scaled = self._slice_markets(scaled, markets)
 
-        pred = H.predict_hybrid(boosters, scaled)
+        pred = H.predict_hybrid(self._boosters[self.window], scaled)
         alos = scaled["market"].map(self.params["alos"]).to_numpy(dtype=float)
         new_arr = pred * scenario.capture_mult * scenario.season_mult
         out = scaled[
@@ -180,17 +200,19 @@ class Simulator:
         ].copy()
         out["NewArrivalHat"] = new_arr
         out["GuestNightsHat"] = new_arr * alos * scenario.alos_mult
+        out["data_status"] = "supply-side-only"
         out.attrs["data_status"] = "supply-side-only"
         return out
 
     def chain(self, scenario: Scenario, markets: str | list[str] | None = "all"):
-        """The parametric chain under the same scenario (South simulate exactly).
+        """The parametric chain under the same scenario (via ``hybrid.simulate``).
 
-        Supply levers pass straight to ``hybrid.simulate``; ``season_mult`` is a
-        demand-level override applied afterwards, because ``simulate``'s own
-        ``season_mult`` is a documented no-op kept for notebook fidelity.
+        Supply levers pass straight to ``hybrid.simulate``. ``season_mult`` is
+        applied once, here, rather than passed in: ``simulate`` accepts but never
+        applies it (a documented no-op kept for notebook fidelity), so both the
+        hybrid and chain paths honour the dial identically.
         """
-        self._require_fit()
+        self._require_data()
         _scaled, raw = self._scenario_supply(scenario)
         raw = self._slice_markets(raw, markets)
 
@@ -202,16 +224,16 @@ class Simulator:
             p2p_mult=scenario.p2p_mult,
             capture_mult=scenario.capture_mult,
             alos_mult=scenario.alos_mult,
-            season_mult=scenario.season_mult,
         )
         out["NewArrivalHat"] = out["NewArrivalHat"] * scenario.season_mult
         out["GuestNightsHat"] = out["GuestNightsHat"] * scenario.season_mult
+        out["data_status"] = "supply-side-only"
         out.attrs["data_status"] = "supply-side-only"
         return out
 
     def monthly(self, scenario: Scenario):
         """Aggregate guest-nights by month -- the safe default view."""
-        f = self.predict(scenario)
+        f = self._predict(scenario)
         g = f.groupby("ym").agg(
             P2P=("P2P", "sum"),
             NewArrivalHat=("NewArrivalHat", "sum"),
@@ -222,7 +244,7 @@ class Simulator:
 
     def seasonal(self, scenario: Scenario):
         """Aggregate by calendar month (seasonal shape)."""
-        f = self.predict(scenario)
+        f = self._predict(scenario)
         return (
             f.groupby("month")
             .agg(
@@ -235,22 +257,22 @@ class Simulator:
 
     def market(self, scenario: Scenario):
         """Market-level view. Rows are supply-side-only (see the module guard)."""
-        return self.predict(scenario)
+        return self._predict(scenario)
 
     def native_capture(self) -> pd.Series:
         """Per-market chain capture (calibration coefficient), the model's view."""
-        self._require_fit()
+        self._require_data()
         return self.params["capture"].copy()
 
     def reproduce_competition_window(self):
-        """Replay the T5 protocol and surface the pinned numbers live.
+        """Train the competition window if needed and replay the T5 protocol.
 
         Returns the test-panel predictions with ``wm_na`` (WMAPE of New Arrivals)
         and ``bias_pct`` on the attrs. The notebook Part C pins these near 20.8%
         and -0.1%; the test suite asserts them within tolerance.
         """
-        self._require_fit()
-        pred = H.predict_hybrid(self._comp_boosters, self.test_panel)
+        self._ensure("competition")
+        pred = H.predict_hybrid(self._boosters["competition"], self.test_panel)
         actual = self.test_panel["NewArr"].to_numpy(dtype=float)
         wm = H.wmape(actual, pred)
         bias = 100.0 * (pred.sum() / actual.sum() - 1.0)
@@ -261,21 +283,59 @@ class Simulator:
         out["NewArrivalHat"] = pred
         out.attrs["wm_na"] = wm
         out.attrs["bias_pct"] = bias
-        out.attrs["best_iter"] = self._best_iter_comp
+        out.attrs["best_iter"] = self._best_iter["competition"]
         return out
 
-    # -- supply assembly -----------------------------------------------------
-    def _scenario_supply(self, scenario: Scenario):
-        """Build raw (route edits, no multipliers) and scaled supply frames.
+    # -- persistence ---------------------------------------------------------
+    def save(self, path: str | Path | None = None) -> Path:
+        """Pickle the fitted state (params + supply cache + boosters).
 
-        Both are at market x month grain with the feature columns the model and
-        chain need. ``_scaled`` applies the supply multipliers, which rewrite
-        ``Total_Seats`` and re-derive PAX/P2P so features and the exposure offset
-        respond; ``_raw`` (used by ``chain``) carries the same seats/PAX/P2P, so
-        ``Scenario()`` exactly reproduces ``fa``.
+        Defaults to ``outputs/models/simulator_<window>.pkl`` (gitignored). The
+        artifact is a cache; predictions from a re-fit are identical.
         """
-        self._require_fit()
-        rows = self._monthly[
+        self._require_data()
+        p = Path(path) if path is not None else paths.MODELS / f"simulator_{self.window}.pkl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "window": self.window,
+            "params": self.params,
+            "fa": self.fa,
+            "panel": self.panel,
+            "test_panel": self.test_panel,
+            "base_routes": self._base_routes,
+            "boosters": self._boosters,
+            "best_iter": self._best_iter,
+        }
+        with p.open("wb") as fh:
+            pickle.dump(payload, fh)
+        return p
+
+    @classmethod
+    def load(cls, path: str | Path | None = None, window: str | None = None) -> "Simulator":
+        """Load a simulator saved by ``save()``."""
+        w = window or "full"
+        p = Path(path) if path is not None else paths.MODELS / f"simulator_{w}.pkl"
+        with p.open("rb") as fh:
+            payload = pickle.load(fh)
+        obj = cls(window=window or payload["window"])
+        obj.params = payload["params"]
+        obj.fa = payload["fa"]
+        obj.panel = payload["panel"]
+        obj.test_panel = payload["test_panel"]
+        obj._base_routes = payload["base_routes"]
+        obj._boosters = payload["boosters"]
+        obj._best_iter = payload["best_iter"]
+        obj._data_ready = True
+        return obj
+
+    # -- supply assembly -----------------------------------------------------
+    def _build_base_routes(self) -> pd.DataFrame:
+        """Route-grain supply (market, city, airline, month), cached once.
+
+        Route grain is kept -- not market grain -- so a ``RouteEdit`` can add a
+        city/airline row and have ``routes``/``airlines`` recount correctly.
+        """
+        rows = cl.flights_monthly()[
             ["ym", "Departure Country Name", "Departure City", "Airline Name",
              "Total_Seats", "Total_PAX", "Total_P2P"]
         ].rename(
@@ -287,14 +347,23 @@ class Simulator:
         ).copy()
         rows["market"] = rows["market"].str.upper().str.strip()
         rows["ym"] = pd.PeriodIndex(rows["ym"], freq="M")
+        return rows
+
+    def _scenario_supply(self, scenario: Scenario):
+        """Build raw (route edits, no multipliers) and scaled supply frames.
+
+        Both are at market x month grain with the feature columns the model and
+        chain need. ``scaled`` applies the supply multipliers, which rewrite
+        ``Total_Seats`` and re-derive PAX/P2P so features and the exposure offset
+        respond; ``raw`` (used by ``chain``) carries the same seats/PAX/P2P, so
+        ``Scenario()`` exactly reproduces ``fa``.
+        """
+        self._require_data()
+        self._validate(scenario)
+        rows = self._base_routes.copy()
 
         for e in scenario.routes:
             mkt = e.market.upper().strip()
-            if mkt not in set(self.fa["market"]):
-                raise ValueError(
-                    f"RouteEdit market {e.market!r} is not one of the 33 "
-                    "flight markets; new markets cannot be encoded by the model."
-                )
             start = pd.Period(e.started_period, freq="M")
             if start < COVERED_FROM or start > COVERED_TO:
                 raise ValueError(
@@ -302,25 +371,26 @@ class Simulator:
                     f"{COVERED_FROM}..{COVERED_TO}."
                 )
             fa_m = self.fa[self.fa["market"] == mkt]
+            if fa_m.empty:
+                raise ValueError(
+                    f"RouteEdit market {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model."
+                )
             lf = fa_m["Total_PAX"].sum() / max(fa_m["Total_Seats"].sum(), 1.0)
             share = fa_m["Total_P2P"].sum() / max(fa_m["Total_PAX"].sum(), 1.0)
+            new_rows = []
             for offset in range(0, int((COVERED_TO - start).n) + 1):
                 ym = start + offset
                 seats = e.seats_per_week * ym.days_in_month / 7.0
                 pax = seats * lf
-                rows = pd.concat(
-                    [
-                        rows,
-                        pd.DataFrame(
-                            [{
-                                "ym": ym, "market": mkt, "city": e.city,
-                                "airline": e.airline, "Total_Seats": seats,
-                                "Total_PAX": pax, "Total_P2P": pax * share,
-                            }]
-                        ),
-                    ],
-                    ignore_index=True,
+                new_rows.append(
+                    {
+                        "ym": ym, "market": mkt, "city": e.city, "airline": e.airline,
+                        "Total_Seats": seats, "Total_PAX": pax, "Total_P2P": pax * share,
+                    }
                 )
+            if new_rows:
+                rows = pd.concat([rows, pd.DataFrame(new_rows)], ignore_index=True)
 
         agg = rows.groupby(["ym", "market"], dropna=False).agg(
             Total_Seats=("Total_Seats", "sum"),
@@ -362,12 +432,31 @@ class Simulator:
         scaled["P2P"] = scaled["Total_P2P"]
         return scaled, raw
 
+    def _validate(self, scenario: Scenario) -> None:
+        for name in SUPPLY_LEVERS:
+            if getattr(scenario, name) <= 0:
+                raise ValueError(
+                    f"{name} must be > 0 (a zeroed supply lever is degenerate); "
+                    f"got {getattr(scenario, name)!r}"
+                )
+        known = set(self.fa["market"])
+        for mkt, mult in scenario.market_seats_mult:
+            if mkt not in known:
+                raise ValueError(
+                    f"market_seats_mult key {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model."
+                )
+            if mult <= 0:
+                raise ValueError(
+                    f"market_seats_mult[{mkt!r}] must be > 0; got {mult!r}"
+                )
+
     @staticmethod
     def _market_mult(scenario: Scenario, markets) -> np.ndarray:
         mult = np.full(len(markets), scenario.seats_mult, dtype=float)
         keys = markets.to_numpy()
-        for m, v in scenario.market_seats_mult.items():
-            mult[keys == m] *= v
+        for mkt, v in scenario.market_seats_mult:
+            mult[keys == mkt] *= v
         return mult
 
     @staticmethod

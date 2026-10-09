@@ -135,5 +135,11 @@ REPORT_CALENDAR = OUTPUTS / "calendar_events_test.md"
 REPORT_MARKET_ATTRIBUTION = OUTPUTS / "market_attribution_test.md"
 REPORT_MARKET_ORIGIN = OUTPUTS / "market_origin_validation_test.md"
 
+# Fitted simulator artifacts (pickled boosters + params + the base supply
+# frame). Built on demand by `Simulator.save()` and gitignored via /outputs/* --
+# an artifact is a convenience cache, never required, and a clean clone trusts
+# the fit-on-demand path instead.
+MODELS = OUTPUTS / "models"
+
 # OpenSky REST credentials, used by tools/fetch_opensky.py and the window-cost tool.
 CREDENTIALS = ROOT / "credentials.json"

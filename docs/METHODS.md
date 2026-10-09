@@ -816,31 +816,42 @@ notebook's Part A/B cells now delegate to it (thin cells that bind the same
 names), so the notebook's pinned Part C numbers *are* the packaged model's
 numbers, and `test_simulator_package.py` re-fits the package and pins it again
 (for the T5 competition window, WMAPE within `20.8 ± 2.0` with aggregate bias
-near `-0.1%`). Runtime is ~2 minutes: the test fits both ensembles once.
+near `-0.1%`). The test takes ~75s: it fits the `full` window once, then the
+`competition` window on demand.
 
 ```
 from pipeline.simulator import Simulator, Scenario, RouteEdit
-sim = Simulator().fit()
+sim = Simulator().fit()                     # trains only the requested window
 sim.monthly(Scenario(seats_mult=1.2))       # safe aggregate view
 sim.market(Scenario(seats_mult=1.2))        # market view, supply-side-only flag
+sim.save()                                  # optional cache -> outputs/models/
 ```
+
+Fitting is **lazy and per-window**: `Simulator(window=...)` selects the model
+default scenarios are scored with, and `fit()` trains only that window
+(`full` for scenario work, `competition` for `reproduce_competition_window`).
+`save()`/`load()` pickle the fitted state to `outputs/models/` (gitignored) to
+spare the ~1-minute refit on a Streamlit restart; no artifact is required, and a
+fresh fit yields identical predictions.
 
 Lever semantics are documented in the `simulator.py` docstring: the three
 supply levers re-enter the model's features *and* its Poisson exposure offset
 pre-score (so the hybrid responds non-linearly); `capture_mult`, `season_mult`
 and `alos_mult` are post-hoc dials. Simulation is bounded by the model's own
 world: markets are a fixed 33-level categorical (new markets and
-out-of-horizon route edits raise), and the horizon stops at the event
+out-of-horizon route edits raise), supply levers must be positive (a zeroed
+lever is rejected, not silently degenerated), and the horizon stops at the event
 calendar's `COVERED_TO` = 2026-02. Because the §4.5 join is structurally wrong
 at market level, `market()` returns rows flagged
-`attrs["data_status"] == "supply-side-only"` and the UI must not present market
-levels as measured; the aggregate views are the defaults for a reason.
+`attrs["data_status"] == "supply-side-only"` **and** a constant `data_status`
+column (the attr is lost by `groupby`/serialization; the column survives), and
+the UI must not present market levels as measured; the aggregate views are the
+defaults for a reason.
 
 The Streamlit front end (`app/simulator.py`) is deliberately left as a stub for
 a UI contributor; the model side is complete, deterministic
 (`deterministic=True`, fixed seeds, single thread) and fit-on-demand from the
-competition pack — no artifact is required, and predictions are identical to
-the notebook's.
+competition pack — predictions are identical to the notebook's.
 
 ---
 

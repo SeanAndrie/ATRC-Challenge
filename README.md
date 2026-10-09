@@ -113,17 +113,21 @@ builds on; the model side is ready and guarded:
 
 ```python
 from pipeline.simulator import Simulator, Scenario
-sim = Simulator().fit()                       # fits the full + competition models
+sim = Simulator().fit()                       # trains only the requested window
 sim.monthly(Scenario(seats_mult=1.2))         # aggregate view — safe by default
 sim.market(Scenario(seats_mult=1.2))          # market view — flagged supply-side-only
+sim.save()                                    # optional cache -> outputs/models/ (gitignored)
 ```
 
 Supply levers (`seats_mult`, `lf_mult`, `p2p_mult`) rewrite the supply frame, so
 the hybrid's features and Poisson exposure respond non-linearly;
-`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. Because of the
-market-join defect in §4.5, `market()` rows carry
-`attrs["data_status"] == "supply-side-only"` and scenarios cannot invent new
-markets or run past the event calendar's 2026-02 horizon. See
+`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. Fitting is lazy
+and per-window (`full` for scenarios, `competition` for the T5 replay); a fitted
+simulator can be pickled with `save()`/`load()` to spare the refit. Because of
+the market-join defect in §4.5, `market()` rows carry
+`attrs["data_status"] == "supply-side-only"` (and a matching `data_status`
+column) and scenarios cannot invent new markets, zero a supply lever, or run
+past the event calendar's 2026-02 horizon. See
 [`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility).
 
 ## Notebooks

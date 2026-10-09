@@ -224,7 +224,8 @@ def simulate(
     out["PAX"] = seats * lf
     p2p_share = (out["Total_P2P"] / out["Total_PAX"]) * p2p_mult
     out["P2P"] = out["PAX"] * p2p_share
-# NOTE: `season_mult` is accepted for signature symmetry with the brief's six
+
+    # NOTE: `season_mult` is accepted for signature symmetry with the brief's six
     # levers but intentionally not applied here -- the notebook's simulate()
     # leaves it a no-op, and the seasonal override is wired in
     # pipeline/simulator.py so the canonical chain is untouched.
@@ -247,6 +248,17 @@ def wmape(actual, pred):
     return 100.0 * np.abs(actual - pred).sum() / np.abs(actual).sum()
 
 
+def _safe_ratio(num, den):
+    """Element-wise ``num / den`` with 0 where the denominator is 0.
+
+    The training panel never has a zero-seat or zero-PAX market-month, so this is
+    numerically identical on every reported number. It exists for scenario
+    frames, where a supply lever can zero a denominator; without it featurize
+    would emit NaN features (0/0) that LightGBM would then treat as missing.
+    """
+    return (num / den).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+
 def featurize(df, events=True):
     """Leak-free features: only supply, calendar and market, all known for the
     competition test window. No target-derived quantity is used, so a prediction
@@ -256,6 +268,7 @@ def featurize(df, events=True):
     measure what the event calendar is worth. Everything else -- the chain in
     Part A and ML-2 to ML-6 -- uses the default `events=True`.
     """
+
     mkt_dtype, mon_dtype = _require_dtypes()
     x = pd.DataFrame(index=df.index)
     x["market"] = df["market"].astype(mkt_dtype)
@@ -263,11 +276,14 @@ def featurize(df, events=True):
     ym = pd.PeriodIndex(df["ym_str"], freq="M")
     x["t"] = ym.year * 12 + ym.month - (2022 * 12 + 1)
     x["log_seats"] = np.log1p(df["Total_Seats"])
-    x["load_factor"] = df["Total_PAX"] / df["Total_Seats"]
-    x["p2p_share"] = df["Total_P2P"] / df["Total_PAX"]
-    x["transfer_share"] = (df["Total_Transfer"] + df["Total_Transit"]) / df["Total_PAX"]
+    x["load_factor"] = _safe_ratio(df["Total_PAX"], df["Total_Seats"])
+    x["p2p_share"] = _safe_ratio(df["Total_P2P"], df["Total_PAX"])
+    x["transfer_share"] = _safe_ratio(
+        df["Total_Transfer"] + df["Total_Transit"], df["Total_PAX"]
+    )
     x["routes"] = df["routes"].astype(float)
     x["airlines"] = df["airlines"].astype(float)
+
     if events:
         # Daily windows already aggregated to monthly day counts, clipped to the
         # month. A 9-day Eid reads as 9, and as 5 + 4 when it straddles a
@@ -275,6 +291,7 @@ def featurize(df, events=True):
         ev = monthly_features(ym)
         for col in FEATURE_COLUMNS:
             x[col] = ev[col].to_numpy().astype(np.float32)
+
     # Feature counts are pinned so a silently dropped or duplicated column fails
     # loudly: 9 without the calendar, 13 with it.
     assert x.shape[1] == (13 if events else 9), x.columns.tolist()
@@ -372,11 +389,14 @@ def train_model(df, n_rounds, seed=0):
 def fit_alos(train, test):
     """Guest-nights are New Arrivals x length of stay. This learns log-ALOS from
     the same features; the alternative is the chain's ALOS[m]."""
+
     lgb = _get_lgb()
     tr = train[(train["NewArr"] > 0) & (train["Guests"] > 0)]
+
     Xtr = featurize(tr)
     Xte = featurize(test)
     ytr = np.log(tr["Guests"].to_numpy(dtype=float) / tr["NewArr"].to_numpy(dtype=float))
+
     preds = []
     for s in seeds:
         p = dict(base)
@@ -384,6 +404,7 @@ def fit_alos(train, test):
         p["seed"] = s
         b = lgb.train(p, lgb.Dataset(Xtr, label=ytr, categorical_feature=cats), num_boost_round=300)
         preds.append(np.exp(b.predict(Xte)))
+
     return np.mean(preds, axis=0)
 
 

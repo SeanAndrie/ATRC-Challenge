@@ -88,7 +88,7 @@ def _(cl):
     flights = cl.read_flights()
     intl_train = cl.read_international_train()
     intl_test = cl.read_international_test()
-    return flights, intl_test, intl_train
+    return (flights,)
 
 
 @app.cell
@@ -118,7 +118,7 @@ def _(hybrid):
     fa, mkt_dtype, mon_dtype, panel, test_m, test_panel, train_m = (
         hybrid.build_panels()
     )
-    return fa, mkt_dtype, mon_dtype, panel, test_m, test_panel, train_m
+    return fa, panel, test_m, test_panel, train_m
 
 
 @app.cell
@@ -669,17 +669,16 @@ def _(mo):
         "sighting variation; 2025's Ramadan is the one year that spread further\n"
         "across the region, and its window is deliberately wider for that reason."
     )
-    return FEATURE_COLUMNS, monthly_features
+    return
 
 
 @app.cell
 def _(hybrid):
     # The canonical featurize (and its in-function 13/9 feature-count asserts)
-    # lives in pipeline/hybrid.py; the categorical encodings it needs are set by
-    # build_panels().
-    cats = hybrid.cats
+    # lives in pipeline/hybrid.py; the market/month categorical encodings it
+    # needs are set inside by build_panels().
     featurize = hybrid.featurize
-    return cats, featurize
+    return (featurize,)
 
 
 @app.cell
