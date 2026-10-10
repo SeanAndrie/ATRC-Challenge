@@ -24,7 +24,7 @@ default scenarios are scored with, and ``fit()`` trains **only that window**:
 A fitted simulator can be cached with ``save()`` / ``load()`` (pickled to
 ``outputs/models/``, gitignored). No artifact is required -- the fit-on-demand
 path is deterministic and yields identical predictions -- so the cache is purely
-to spare the ~2-minute fit on a Streamlit restart.
+to spare the ~1-minute fit on a Streamlit restart.
 
 Lever semantics
 

@@ -133,6 +133,7 @@ weight. The seven success criteria map to the work as follows:
 | 2026-10-05 | Phase 3 and 4 merged into one notebook; OpenSky puller moved to `tools/fetch_opensky.py` | `notebooks/hybrid_layer.py` |
 | 2026-10-06 | Origin mix validated against SCAD's official embarkation table; region-level gap pinned | `pipeline/aviation/scad_region_arrivals.py`, `test_market_origin_validation.py` |
 | 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py`, `test_simulator_package.py` |
+| 2026-10-10 | Simulator package hardened: lazy per-window fit, pickle persistence, immutable validated market multipliers, lever guards | `pipeline/simulator.py`, `pipeline/hybrid.py`, `pipeline/tests/test_simulator_package.py` |
 
 The repository has a single commit (`Initial commit: ATRC Abu Dhabi
 flight-to-hotel analysis`); the working tree carries the Phase 2–4 work. Raw data
@@ -420,7 +421,9 @@ not tuned on the reported holdouts: `num_leaves=15`, `min_child_samples=20`,
 `lambda_l2=1.0`, single thread, deterministic. Iteration count is selected by
 early stopping (patience 100, cap 2000) on an internal 6-month tail of each fit
 window, then a **5-seed ensemble** (`0,1,2,42,2024`) is refit on the full fit
-window and averaged on the raw-score scale before the exp link. Selected
+window and averaged on the rate scale -- each seed predicts `exp(raw score +
+log(Total_P2P))` and the resulting intensities are meaned. (Averaging raw
+scores instead would be a geometric-mean estimator.) Selected
 iterations: **1466** (T4) and **1978** (T5), with the event calendar of §4.3;
 **1334** and **1934** without it.
 
@@ -650,6 +653,7 @@ report. Reproduce with the commands shown.
 | Market attribution | `pipeline/tests/test_market_attribution.py` | `outputs/market_attribution_test.md` | Paired-panel capture per market, supply vs demand mix divergence, lower bound on misattributed guests | Capture > 1.0 in 5 markets (CHINA 5.854); ~903k guests misfiled; identity gap exactly 0 |
 | Origin-mix validation | `pipeline/tests/test_market_origin_validation.py` | `outputs/market_origin_validation_test.md` | Pack region mix vs SCAD embarkation mix (KTS 2025 t.6): supply, nationality, within-market signal, hub exposure | GCC gap +5.4–7.3 pp every year; TV 0.15–0.20; hub capture ~0.1; no coarser rescue |
 | ML hybrid | `notebooks/hybrid_layer.py` Part B | — | LightGBM Poisson with offset, same T4/T5 splits | T4 21.3%, T5 20.6%, guest-nights 20.8%; events worth +0.41/+0.25pp |
+| Simulator packaging | `pipeline/tests/test_simulator_package.py` | — | Re-fits the packaged model end to end; pins T5 WMAPE 20.8 ± 2.0 / bias −0.1%, lazy per-window fit, save/load round-trip, lever guards | ~75s; all pins pass |
 
 Each report is written fresh by its script on every run and gitignored; the
 Script column above names the generator.
@@ -677,6 +681,7 @@ Script column above names the generator.
 | 2026-10-05 | No attempt made to re-derive the supply→nationality mapping; not identifiable from this pack without residence data | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
 | 2026-10-06 | Origin mix validated against SCAD's official region-of-embarkation table (KTS 2025 t.6): pack files last-flight, not true embarkation (GCC +5–7 pp every year); no coarser region grouping rescues market-level attribution | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
 | 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model; packaging pinned by a ninth diagnostic | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
+| 2026-10-10 | Simulator package hardened after a critical audit: lazy per-window fit (fit trains only the selected window), save()/load() pickle persistence, market_seats_mult made an immutable tuple validated against the 33 markets, zero-supply/unknown-market/out-of-horizon guards, NaN-safe featurize, data_status column; packaging diagnostic halved to ~75s | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 
 ---
 
