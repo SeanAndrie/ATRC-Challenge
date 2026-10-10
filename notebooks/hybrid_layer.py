@@ -611,8 +611,8 @@ def _(mo):
     market at once.
 
     Islamic dates are derived from an inline tabular Hijri conversion, then pinned
-    to hand-checked Gregorian windows by
-    `pipeline/tests/test_calendar_events.py`. UAE holidays follow moon sighting, so
+    to hand-checked Gregorian windows in `pipeline/calendar_events.py`. UAE
+    holidays follow moon sighting, so
     declared dates can differ from a computed calendar by a day or two; the pins
     are two-to-five days wide for that reason, and every feature counts days
     across a multi-day window, so a one-day shift cannot move them.
@@ -1122,8 +1122,7 @@ def _(mo):
       error is zero-sum across hub and spoke markets and cancels in the national
       total); **market-level attribution does not**, which includes the simulator's
       market breakdown and the `seats_mult` lever. Not fixable from this pack —
-      `Residence (groups)` is constant. See `pipeline/tests/test_market_attribution.py`
-      and METHODS §4.5.
+      `Residence (groups)` is constant. See METHODS §4.5.
     * **The chain's 5.0 capture cap is load-bearing and favours the baseline.** It
       clips CHINA (raw 5.854, inflated by connecting traffic filed under China),
       and removing it *worsens* the chain from 32.77% to 36.10% on T5. The
@@ -1161,10 +1160,10 @@ def _(mo):
     * **Event dates are computed, not declared.** UAE holidays follow moon
       sighting, so a computed Islamic date can lead the official one by a day or
       two. The features count days across multi-day windows so a one-day shift
-      cannot move them, and `pipeline/tests/test_calendar_events.py` pins every
-      date to a two-to-five-day window. Outside 2022-01 to 2026-02 the module
+      cannot move them, and every derived date is pinned to a two-to-five-day
+      window. Outside the pinned calendar range the module
       raises rather than reporting zeros, so a longer horizon needs the pin table
-      extended and the test re-run.
+      extended.
     * **The UAE changed its weekend from Fri–Sat to Sat–Sun in January 2025**,
       and gave National Day a four-day weekend in December 2025 — inside the
       competition test window and inside the training span, so the regime change

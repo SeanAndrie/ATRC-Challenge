@@ -15,6 +15,10 @@ credentials.json
 # OpenRouter chatbot credentials (template: .env.example)
 .env
 
+# Local CSV export of the licensed competition pack. Same licence terms as
+# data/raw/competition/: competition use only, never committed.
+/atrc-data/
+
 # marimo session cache. Regenerable; per-notebook run state, not source.
 notebooks/__marimo__/
 

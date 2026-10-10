@@ -97,7 +97,6 @@ PIPELINE = ROOT / "pipeline"
 DCT_PIPELINE = PIPELINE / "dct"
 AVIATION = PIPELINE / "aviation"
 COMPETITION_PIPELINE = PIPELINE / "competition"
-TESTS = PIPELINE / "tests"
 NOTEBOOKS = ROOT / "notebooks"
 TOOLS = ROOT / "tools"
 APP = ROOT / "app"
@@ -106,43 +105,33 @@ APP = ROOT / "app"
 # pipeline/dct/dct_parse.py`), not installed as a package, so they import each
 # other by bare module name. That needs their directory on sys.path:
 #   DCT_PIPELINE for dct_common, dct_period, dct_charts, ...
-#   TESTS      for test_retarget_international importing test_market_link
-#   AVIATION   for aircraft_seats, shared by the ADS-B builder, its calibration,
-#              the market test and the notebook
-#   COMPETITION_PIPELINE for load and audit, shared by the P2P-vs-PAX test, the
-#              chain model and the competition notebook
+#   AVIATION   for aircraft_seats, shared by the ADS-B builder, its calibration
+#              and the notebook
+#   COMPETITION_PIPELINE for load and audit, shared by the chain model and the
+#              competition notebook
 # Adding pipeline/dct to sys.path is also what makes `eras` importable as a
 # package, which is how dct_parse reaches the era-specific readers.
 #
 # Doing this on import means every script that imports paths can import these
 # too, which is why it is a side effect rather than a function the caller has to
 # remember to call.
-for _d in (DCT_PIPELINE, TESTS, AVIATION, COMPETITION_PIPELINE):
+for _d in (DCT_PIPELINE, AVIATION, COMPETITION_PIPELINE):
     if str(_d) not in sys.path:
         sys.path.insert(0, str(_d))
 
 # --- outputs -----------------------------------------------------------------
-# Generated test reports. These are written by the scripts in pipeline/tests and
-# are gitignored: they are findings about the data, not source, and a clean
-# clone regenerates them in a second. They live in outputs/ rather than docs/ so
-# docs/ holds only hand-written documentation.
+# Generated artifacts live here and are gitignored via /outputs/*: the fitted
+# simulator cache and saved scenario sessions. Nothing in the repo reads
+# outputs/ at import time; a clean clone works without it.
 OUTPUTS = ROOT / "outputs"
-REPORT_MARKET_LINK = OUTPUTS / "market_link_test.md"
-REPORT_AGGREGATE_LINK = OUTPUTS / "aggregate_link_test.md"
-REPORT_RETARGET = OUTPUTS / "retarget_test.md"
-REPORT_P2P_VS_PAX = OUTPUTS / "p2p_vs_pax_test.md"
-REPORT_CALENDAR = OUTPUTS / "calendar_events_test.md"
-REPORT_MARKET_ATTRIBUTION = OUTPUTS / "market_attribution_test.md"
-REPORT_MARKET_ORIGIN = OUTPUTS / "market_origin_validation_test.md"
 
 # Fitted simulator artifacts (pickled boosters + params + the base supply
-# frame). Built on demand by `Simulator.save()` and gitignored via /outputs/* --
-# an artifact is a convenience cache, never required, and a clean clone trusts
-# the fit-on-demand path instead.
+# frame). Built on demand by `Simulator.save()` -- an artifact is a convenience
+# cache, never required, and a clean clone trusts the fit-on-demand path.
 MODELS = OUTPUTS / "models"
 
 # Saved scenario runs from the Streamlit simulator: one parquet of monthly
-# results plus a JSON spec per run. Also gitignored via /outputs/*.
+# results plus a JSON spec per run.
 SESSIONS = OUTPUTS / "sessions"
 
 # OpenSky REST credentials, used by tools/fetch_opensky.py and the window-cost tool.

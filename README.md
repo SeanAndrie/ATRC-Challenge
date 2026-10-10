@@ -35,11 +35,10 @@ pipeline/hotel_supply.py
 pipeline/calendar_events.py   UAE event calendar (Ramadan, Eid, National Day, NYE)
 pipeline/hybrid.py            canonical chain + LightGBM layer (notebook and simulator share it)
 pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
-pipeline/tests/    nine standalone diagnostics
 notebooks/         three marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
-outputs/           generated reports + scratch (gitignored)
+outputs/           model cache + saved scenarios (gitignored)
 ```
 
 No module hardcodes an absolute path. `pipeline/paths.py` owns them all, and
@@ -52,8 +51,7 @@ uv sync                      # or: python -m venv .venv && .venv/bin/pip install
 .venv/bin/python -c "import pandas"    # confirm the environment
 ```
 
-Python 3.14. `pytest` is **not** installed — the diagnostics are plain scripts,
-run them directly. `scipy` is present (pulled in by `statsmodels`), and the
+Python 3.14. `scipy` is present (pulled in by `statsmodels`), and the
 competition hybrid model uses `lightgbm`.
 
 `credentials.json` (gitignored) holds the OpenSky API credentials.
@@ -82,16 +80,9 @@ in particular is quota-limited and may not be repeatable.
 ## Checking the work
 
 ```
-.venv/bin/python pipeline/dct/dct_validate.py        # reconciliation
-.venv/bin/python pipeline/tests/test_market_link.py
-.venv/bin/python pipeline/tests/test_aggregate_link.py
-.venv/bin/python pipeline/tests/test_retarget_international.py
-.venv/bin/python pipeline/tests/test_p2p_vs_pax.py
-.venv/bin/python pipeline/tests/test_calendar_events.py
-.venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets
-.venv/bin/python pipeline/tests/test_market_origin_validation.py   # pack region mix vs SCAD embarkation mix
-.venv/bin/python pipeline/tests/test_simulator_package.py   # packaging gate; writes no report
-.venv/bin/python pipeline/tests/crosscheck_markets.py
+.venv/bin/python pipeline/dct/dct_validate.py        # data reconciliation
+.venv/bin/streamlit run app/simulator.py             # the interactive prototype
+.venv/bin/python -m marimo export html --no-include-code notebooks/hybrid_layer.py -o out.html
 ```
 
 `dct_validate.py` sums each year's monthly series and compares it against the
@@ -99,11 +90,9 @@ annual total printed in the same report, then checks an external anchor: the
 December 2017 DCT report states 4,875,499 guests, and the parsed months sum to
 4,874,253 — a 0.026% difference.
 
-The diagnostics write into `outputs/`. Each report is written fresh by its
-script on every run and is gitignored; the commands above name the generators.
-`test_simulator_package.py` is the ninth diagnostic but writes no report: it
-re-fits the packaged model and pins it to the notebook's numbers, so the
-simulator cannot silently drift from the deliverable.
+The model itself is deterministic — fixed seeds, single thread — so the
+notebook reproduces every published number exactly; the findings behind each
+figure are recorded in [`docs/METHODS.md`](docs/METHODS.md).
 
 ## Streamlit simulator
 
@@ -195,8 +184,8 @@ That trains 15 LightGBM models, so it is not instant.
 
 ## Background — what the public data showed (Phase 1)
 
-Summarised in [`docs/METHODS.md` Phase 1](docs/METHODS.md#phase-1--public-data-investigation-background)
-and the generated reports in `outputs/`. This is background evidence; the
+Summarised in [`docs/METHODS.md` Phase 1](docs/METHODS.md#phase-1--public-data-investigation-background).
+This is background evidence; the
 submission itself is Phase 2–4.
 
 | Question | Answer |
@@ -233,16 +222,15 @@ filed under the hub (India → Doha → AUH books as QATAR supply, INDIA demand)
 - **`capture` is a calibration coefficient, not a conversion probability.**
 
 Not fixable from this pack: `Residence (groups)` is constant and no flight-side
-residence field exists. Guarded by
-`pipeline/tests/test_market_attribution.py`; full analysis in
+residence field exists. Full analysis in
 [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
 
 An official anchor independently confirms the direction at region level. Against
 SCAD's own embarkation-region table (Key Transport Statistics 2025, t.6) the
 pack's GCC share runs **+5.4 to +7.3 pp above SCAD's every year** (TV distance
 ~0.15–0.20), the pack files no departures for Australasia, South America or
-`Other`, and *no coarser region grouping brings capture near 1.0*. Guarded by
-`pipeline/tests/test_market_origin_validation.py`; the parser and auditable
+`Other`, and *no coarser region grouping brings capture near 1.0*. The parser
+and auditable
 country→region mapping live in `pipeline/aviation/scad_region_arrivals.py` — see
 [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
 
@@ -270,14 +258,14 @@ in sign, small. Source-market public holidays are still not covered; see
 | 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
 | 05 | Granularity by market and season | 33-market panel, monthly season index — **attribution unvalidated, see the warning above** |
 | 06 | Decision relevance | capture spread is the allocation lever; **market levers misfiled, see the warning above** |
-| 07 | Reproducibility | pinned assertions T7/ML-6; [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
+| 07 | Reproducibility | deterministic model (fixed seeds, single thread); [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
 
 ## Open work
 
-- **Market attribution is the top blocker.** It is pinned and guarded
-  (`test_market_attribution.py`), and the new region-level diagnostic
-  (`test_market_origin_validation.py`) confirms it against SCAD's official
-  embarkation table — but it is **not resolved**. Needs passenger
+- **Market attribution is the top blocker.** It is pinned arithmetically
+  (capture exceeds 1.0 in five markets), and a region-level check against
+  SCAD's official embarkation table confirms it — but it is **not resolved**.
+  Needs passenger
   residence/nationality on the flight side, or all output must be re-scoped to
   aggregate — which costs success criteria 01, 05 and 06. See
   [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
@@ -309,9 +297,3 @@ in sign, small. Source-market public holidays are still not covered; see
 | [`docs/competition-brief.md`](docs/competition-brief.md) | challenge framing (provided by the organisers) |
 | [`app/README.md`](app/README.md) | the Streamlit simulator — question-to-lever mapping, caveats, deployment |
 | [`docs/PITCH_DECK.md`](docs/PITCH_DECK.md) | 10-page product pitch deck source |
-
-The seven generated diagnostics reports (`market_link_test.md`,
-`aggregate_link_test.md`, `retarget_test.md`, `p2p_vs_pax_test.md`,
-`calendar_events_test.md`, `market_attribution_test.md`,
-`market_origin_validation_test.md`) live in `outputs/` and are **gitignored**.
-Regenerate them with the diagnostics above; a clean clone will not have them.

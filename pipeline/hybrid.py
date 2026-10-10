@@ -98,8 +98,7 @@ def build_panels():
     five markets (CHINA 5.854, CANADA 2.288, USA 1.990, RUSSIA 1.527, FRANCE
     1.220) -- more guests than terminating passengers, which is impossible under
     a valid join. About 903,000 guests cannot have arrived the way the pack
-    files them. See pipeline/tests/test_market_attribution.py and
-    docs/METHODS.md section 4.5.
+    files them. See docs/METHODS.md section 4.5.
 
     Consequences, and they differ sharply:
 

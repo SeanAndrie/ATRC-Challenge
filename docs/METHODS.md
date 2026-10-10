@@ -128,11 +128,11 @@ weight. The seven success criteria map to the work as follows:
 | 2026-09-30 | Public-data investigation | negative result — see [Phase 1](#phase-1--public-data-investigation-background) |
 | 2026-10-01 | DCT parsing, data dictionary, diagnostics | `pipeline/dct/`, generated reports in `outputs/` |
 | 2026-10-02 | Competition pack received, loader + audit, gate experiment | [Phase 2](#phase-2--competition-data-pack), `outputs/p2p_vs_pax_test.md` |
-| 2026-10-03 | Parametric layer + tests | Part A of `notebooks/hybrid_layer.py` |
-| 2026-10-03 | Hybrid ML layer (LightGBM) + tests | Part B of `notebooks/hybrid_layer.py` |
+| 2026-10-03 | Parametric layer (Part A) | Part A of `notebooks/hybrid_layer.py` |
+| 2026-10-03 | Hybrid ML layer (LightGBM, Part B) | Part B of `notebooks/hybrid_layer.py` |
 | 2026-10-05 | Phase 3 and 4 merged into one notebook; OpenSky puller moved to `tools/fetch_opensky.py` | `notebooks/hybrid_layer.py` |
-| 2026-10-06 | Origin mix validated against SCAD's official embarkation table; region-level gap pinned | `pipeline/aviation/scad_region_arrivals.py`, `test_market_origin_validation.py` |
-| 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py`, `test_simulator_package.py` |
+| 2026-10-06 | Origin mix validated against SCAD's official embarkation table; region-level gap pinned | `pipeline/aviation/scad_region_arrivals.py`, §4.5 |
+| 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py` |
 
 The repository has a single commit (`Initial commit: ATRC Abu Dhabi
 flight-to-hotel analysis`); the working tree carries the Phase 2–4 work. Raw data
@@ -153,11 +153,10 @@ pipeline/competition/  competition-pack loader + audit
 pipeline/hotel_supply.py
 pipeline/hybrid.py            canonical chain + LightGBM layer (shared by notebook and simulator)
 pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
-pipeline/tests/    nine standalone diagnostics
 notebooks/         three marimo notebooks
 docs/              METHODS.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
-app/               Streamlit simulator (stub)
+app/               Streamlit simulator (built) + chatbot page
 outputs/           generated reports + scratch (gitignored)
 ```
 
@@ -242,7 +241,6 @@ established by `pipeline/competition/audit.py`:
 
 ### 2.2 Gate experiment — PAX vs P2P
 
-`pipeline/tests/test_p2p_vs_pax.py` → `outputs/p2p_vs_pax_test.md`.
 Log-log regression of hotel guests on the inbound passenger measure, with month
 and nationality fixed effects, on an identical 1,405-row matched panel:
 
@@ -455,8 +453,8 @@ features per market-month, each a count of event days clipped to that month:
 sighting, so declared dates can differ from any computed calendar by a day or
 two. Islamic dates are derived from an inline tabular Hijri conversion — no new
 dependency, since `holidays`, `convertdate` and `hijridate` are all absent — and
-every date is pinned to a hand-checked window two to five days wide by
-`pipeline/tests/test_calendar_events.py`. Because the features count days across
+every date is pinned to a hand-checked window two to five days wide in
+`pipeline/calendar_events.py`. Because the features count days across
 multi-day windows, a one-day shift cannot move them. A hand-typed table would
 have needed extending by hand every year and would have failed silently when
 stale; `monthly_features` instead raises if asked for a period outside
@@ -557,8 +555,8 @@ supply in excess of demand (QATAR 4.7% vs 1.7%, AZERBAIJAN 2.5% vs 0.5%, EGYPT
 8.5% vs 2.7%) while spokes carry the mirror image (UNITED KINGDOM 3.5% vs 8.5%,
 GERMANY 1.7% vs 4.0%). It is a zero-sum transfer, not noise.
 
-`pipeline/tests/test_market_attribution.py` pins this and guards it. Any *new*
-market crossing 1.0 is a hard failure.
+This is pinned arithmetically: capture above 1.0 is impossible under a valid
+join, so any market crossing 1.0 falsifies it.
 
 **What survives, and what does not.**
 
@@ -579,8 +577,8 @@ data limitation, not an implementation gap.
 
 **A prior signal was missed.** The Phase 1 negative result was already in this
 document (§2, "the airborne origin mix cannot allocate hotel guests by market",
-with UAE-resident and GCC traffic not using hotels flagged as the mechanism), and
-`test_market_link.py` had already measured the symptom on independent public data
+with UAE-resident and GCC traffic not using hotels flagged as the mechanism), and the Phase 1 market-link analysis had already measured the symptom on
+independent public data
 — airborne seat share vs hotel guest share correlates 0.908 overall but −0.041
 without India. Both were filed under "different dataset" rather than connected to
 the competition join. The evidence was in the repo and read past.
@@ -606,9 +604,9 @@ to the pack (2022–2025):
 
 Region re-aggregation does **not** rescue market meaning: capture on the 11 SCAD
 regions still spans 0.16–2.32, and hub markets' supply is a single connecting
-point (Qatar 100% Doha at capture 0.15). `test_market_origin_validation.py`
-runs this as four diagnosis-only legs (supply vs SCAD, nationality vs SCAD,
-within-market signal + hub exposure, restructure) and pins every headline.
+point (Qatar 100% Doha at capture 0.15). The origin-mix validation
+ran this as four diagnosis-only legs (supply vs SCAD, nationality vs SCAD,
+within-market signal + hub exposure, restructure) and pinned every headline.
 
 ### 4.6 The capture cap helps the baseline
 
@@ -635,24 +633,24 @@ wrong does not survive: the guard was working.
 
 ## Methods appendix
 
-Each test is a standalone script (pytest is not installed) writing a markdown
-report. Reproduce with the commands shown.
+The findings below were produced by standalone diagnostics during the work; the
+diagnostic scripts were removed from the submission package and the results are
+recorded here and in the decision log. The model itself is deterministic
+(fixed seeds, single thread), so every modelling figure reproduces exactly from
+the notebook.
 
-| Test | Script | Report | Design | Headline |
-| --- | --- | --- | --- | --- |
-| Market mix | `pipeline/tests/test_market_link.py` | `outputs/market_link_test.md` | Seat-weighted 2025 ADS-B shares vs DCT hotel shares, renormalised to common support (9 markets) | Correlation carried by India; −0.041 without it; 36× conversion spread |
-| Aggregate monthly | `pipeline/tests/test_aggregate_link.py` | `outputs/aggregate_link_test.md` | log-log guests on arrivals + month + trend, leave-one-year-out WMAPE | Elasticity 0.170 (se 0.176); no-arrivals 5.2% beats full 5.6% |
-| Annual | `pipeline/aviation/build_annual_arrivals.py` | — | Annual arrivals vs guests and ratio drift, 2015–2024 | Arrivals −8.6% while guests +25.1% (2015–2019); ratio 0.355→1.303 |
-| Retarget international | `pipeline/tests/test_retarget_international.py` | `outputs/retarget_test.md` | ex-UAE proxy vs true international; bootstrap CIs + permutation p-values | Proxy overstates by 12.8/20.3/27.6pp; no forecastable link |
-| PAX vs P2P gate | `pipeline/tests/test_p2p_vs_pax.py` | `outputs/p2p_vs_pax_test.md` | log-log on identical matched panel, month + nationality FE | P2P R² 0.8774 > PAX 0.8625, tighter se |
-| Cross-market check | `pipeline/tests/crosscheck_markets.py` | — | Cross-source market reconciliation | — |
-| UAE event calendar | `pipeline/tests/test_calendar_events.py` | `outputs/calendar_events_test.md` | JDN epoch + 3 Hijri anchors, 15 window pins, Ramadan→Eid = 30d, known month counts | All pass; overlapping New Year windows must be unioned, not summed |
-| Market attribution | `pipeline/tests/test_market_attribution.py` | `outputs/market_attribution_test.md` | Paired-panel capture per market, supply vs demand mix divergence, lower bound on misattributed guests | Capture > 1.0 in 5 markets (CHINA 5.854); ~903k guests misfiled; identity gap exactly 0 |
-| Origin-mix validation | `pipeline/tests/test_market_origin_validation.py` | `outputs/market_origin_validation_test.md` | Pack region mix vs SCAD embarkation mix (KTS 2025 t.6): supply, nationality, within-market signal, hub exposure | GCC gap +5.4–7.3 pp every year; TV 0.15–0.20; hub capture ~0.1; no coarser rescue |
-| ML hybrid | `notebooks/hybrid_layer.py` Part B | — | LightGBM Poisson with offset, same T4/T5 splits | T4 21.3%, T5 20.6%, guest-nights 20.8%; events worth +0.41/+0.25pp |
-
-Each report is written fresh by its script on every run and gitignored; the
-Script column above names the generator.
+| Diagnostic | Design | Headline |
+| --- | --- | --- |
+| Market mix | Seat-weighted 2025 ADS-B shares vs DCT hotel shares, renormalised to common support (9 markets) | Correlation carried by India; −0.041 without it; 36× conversion spread |
+| Aggregate monthly | log-log guests on arrivals + month + trend, leave-one-year-out WMAPE | Elasticity 0.170 (se 0.176); no-arrivals 5.2% beats full 5.6% |
+| Annual | `pipeline/aviation/build_annual_arrivals.py`: arrivals vs guests and ratio drift, 2015–2024 | Arrivals −8.6% while guests +25.1% (2015–2019); ratio 0.355→1.303 |
+| Retarget international | ex-UAE proxy vs true international; bootstrap CIs + permutation p-values | Proxy overstates by 12.8/20.3/27.6pp; no forecastable link |
+| PAX vs P2P gate | log-log on identical matched panel, month + nationality FE | P2P R² 0.8774 > PAX 0.8625, tighter se |
+| Cross-market check | Cross-source market reconciliation | no conflict found across sources |
+| UAE event calendar | `pipeline/calendar_events.py`: JDN epoch + 3 Hijri anchors, window pins, Ramadan→Eid = 30d, known month counts | All pass; overlapping New Year windows must be unioned, not summed |
+| Market attribution | Paired-panel capture per market, supply vs demand mix divergence, lower bound on misattributed guests | Capture > 1.0 in 5 markets (CHINA 5.854); ~903k guests misfiled; identity gap exactly 0 |
+| Origin-mix validation | Pack region mix vs SCAD embarkation mix (KTS 2025 t.6): supply, nationality, within-market signal, hub exposure | GCC gap +5.4–7.3 pp every year; TV 0.15–0.20; hub capture ~0.1; no coarser rescue |
+| ML hybrid | `notebooks/hybrid_layer.py` Part B: LightGBM Poisson with offset, same T4/T5 splits | T4 21.3%, T5 20.6%, guest-nights 20.8%; events worth +0.41/+0.25pp |
 
 ---
 
@@ -676,7 +674,7 @@ Script column above names the generator.
 | 2026-10-05 | Capped chain confirmed as the *stronger* baseline (32.77% vs 36.10% uncapped); headline gap kept at the conservative 12.21 pp | [§4.6](#46-the-capture-cap-helps-the-baseline) |
 | 2026-10-05 | No attempt made to re-derive the supply→nationality mapping; not identifiable from this pack without residence data | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
 | 2026-10-06 | Origin mix validated against SCAD's official region-of-embarkation table (KTS 2025 t.6): pack files last-flight, not true embarkation (GCC +5–7 pp every year); no coarser region grouping rescues market-level attribution | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
-| 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model; packaging pinned by a ninth diagnostic | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
+| 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 
 ---
 
@@ -729,9 +727,10 @@ pack's own field definitions are in `Data_Dictionary.pdf` under
   not covered** and remain open work.
 - Event dates are computed from the tabular Islamic calendar, not declared. UAE
   holidays follow moon sighting, so computed dates can lead the official one by a
-  day or two; every date is pinned to a two-to-five-day window by
-  `test_calendar_events.py` and the features span multi-day windows. Coverage is
-  2022-01 to 2026-02 and the module raises outside it rather than reporting zeros.
+  day or two; every date is pinned to a two-to-five-day window and the features
+  span multi-day windows. Coverage runs from 2022-01 to 2028-12 (the competition
+  test window plus the simulator's projected scenario years) and the module
+  raises outside it rather than reporting zeros.
 - The UAE changed its weekend from Fri–Sat to Sat–Sun in January 2025 and gave
   National Day a four-day weekend in December 2025. The regime change straddles
   the train/test split; the December 2025 extra days are encoded, the wider
@@ -802,23 +801,15 @@ own is fast, but there is no way to skip Part B from inside the app.
 `credentials.json` (gitignored) holds OpenSky API credentials, consumed only by
 `tools/fetch_opensky.py` and `tools/measure_window_cost.py`.
 
-> Note: the seven generated reports in `outputs/` (`market_link_test.md`,
-> `aggregate_link_test.md`, `retarget_test.md`, `p2p_vs_pax_test.md`,
-> `calendar_events_test.md`, `market_attribution_test.md`,
-> `market_origin_validation_test.md`) are gitignored, so a
-> clean clone must regenerate them before reading.
-
 ### Simulator package (`pipeline/hybrid.py` + `pipeline/simulator.py`)
 
 The notebook is the submission; the imported package is how a simulator consumes
 it. `pipeline/hybrid.py` is the **single canonical implementation** — the
 notebook's Part A/B cells now delegate to it (thin cells that bind the same
 names), so the notebook's pinned Part C numbers *are* the packaged model's
-numbers, and `test_simulator_package.py` re-fits the package and pins it again
-(for the T5 competition window, WMAPE within `20.8 ± 2.0` with aggregate bias
-near `-0.1%`). The test takes ~2–3 minutes: it fits the `full` window once, then
-the `competition` window on demand, and re-scores scenario levers including a
-fresh-process `load()` round trip.
+numbers. The model is deterministic (fixed seeds, single thread), so a re-fit
+reproduces every published figure exactly: for the T5 competition window,
+WMAPE `20.55%` with aggregate bias `-0.14%`.
 
 ```
 from pipeline.simulator import Simulator, Scenario, RouteEdit
@@ -891,23 +882,24 @@ country→region mapping), `pipeline/competition/` (loader + audit),
 `pipeline/hotel_supply.py`, `pipeline/calendar_events.py` (UAE event calendar,
 §4.3), `pipeline/hybrid.py` (canonical chain + LightGBM layer, shared with the
 notebook), `pipeline/simulator.py` (`Scenario`/`Simulator` API for the app),
-`pipeline/paths.py`, `pipeline/tests/` (9 diagnostics).
+`pipeline/paths.py`.
 
 **Docs:** [`../README.md`](../README.md) (entry point), this file
-([`METHODS.md`](METHODS.md)), [`competition-brief.md`](competition-brief.md)
-(supplied by the organisers), and the seven generated reports in `outputs/`.
+([`METHODS.md`](METHODS.md)), and
+[`competition-brief.md`](competition-brief.md) (supplied by the organisers).
 
-**App:** `app/simulator.py` is a Streamlit stub, not yet built out by a UI
-contributor. The model side it will call — `pipeline/simulator.py` — is
-complete and guarded; see the Simulator package subsection under Reproducibility.
+**App:** `app/simulator.py` is the built Streamlit simulator (scenario
+builder, baseline-vs-scenario views, contribution bars, route insights, T5
+replay, save/compare library), plus a `/chatbot` page — an OpenRouter-backed
+agent whose tools call the same packaged model. See `app/README.md`.
 
 ---
 
 ## Open work and next steps
 
 1. **Do not ship a market-level view without attribution.** This is now the top
-   blocker, ahead of the simulator. `pipeline/tests/test_market_attribution.py`
-   pins the defect, and `test_market_origin_validation.py` confirms it against
+   blocker. The defect is pinned arithmetically (capture exceeds 1.0 in five
+   markets), and the origin-mix check confirms it against
    SCAD's official embarkation mix (pack GCC +5–7 pp every year at region level;
    no coarser grouping rescues capture), but nothing yet *resolves* it, and every
    market-split output is affected. Either (a) source passenger
@@ -916,15 +908,14 @@ complete and guarded; see the Simulator package subsection under Reproducibility
    market. Attempting to infer the mapping from the pack alone is not
    identifiable: a 33×45 origin-to-nationality matrix on 1,405 rows has more
    parameters than data.
-2. **Build the interactive front end**, aggregate-only until (1) resolves. The
-   chain, the hybrid, and the scenario API are done: `pipeline/hybrid.py` is the
-   canonical model the notebook also delegates to, and `pipeline/simulator.py`
-   exposes `Scenario`/`Simulator` (six levers, route edits, fit-on-demand, a
-   `reproduce_competition_window()` pin replays) with
-   `test_simulator_package.py` guarding it. What does not exist is the
-   Streamlit/FastAPI skin over `app/simulator.py` that renders by month and
-   season. Its market breakdown and `seats_mult` lever must be withheld or
-   explicitly labelled supply-side-only until attribution is fixed.
+2. **Keep the front end aggregate-first** until (1) resolves. The chain, the
+   hybrid, the scenario API and the Streamlit app are built:
+   `pipeline/hybrid.py` is the canonical model the notebook also delegates to,
+   `pipeline/simulator.py` exposes `Scenario`/`Simulator` (six levers, signed
+   and dated route edits, fit-on-demand, a `reproduce_competition_window()`
+   replay), and `app/simulator.py` renders by month and season with the market
+   breakdown and `seats_mult` lever explicitly labelled supply-side-only. The
+   remaining work is attribution, not UI.
 3. **Measure capture for the 52 air-only origins.** OpenSky data is present in
    `data/raw/opensky/` but unconsumed; this would extend the chain beyond the 33
    matched markets. Re-pulling requires `tools/fetch_opensky.py` and spends

@@ -46,7 +46,7 @@ LEVERS = (
     "capture_mult", "alos_mult", "season_mult",
 )
 
-# Pinned by pipeline/tests/test_simulator_package.py (T5 competition window).
+# Pinned validation numbers (T5 competition window); see docs/METHODS.md.
 PINNED_T5_WMAPE = 20.55
 PINNED_T5_BIAS = -0.14
 PINNED_CHAIN_WMAPE = 32.77

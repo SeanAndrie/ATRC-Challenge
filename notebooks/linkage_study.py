@@ -202,8 +202,6 @@ def _(mo):
     | `dct_parse.py` | builds the hotel panel from the 99 cached PDFs |
     | `dct_validate.py` | unit-normalises and reconciles months against published annuals |
     | `build_annual_arrivals.py` | extracts the official annual arrivals series from SCAD publications |
-    | `test_market_link.py` | Test 1 |
-    | `test_aggregate_link.py` | Test 2 |
     """)
     return
 
@@ -1080,8 +1078,7 @@ def _(matched, mo, month_dummies, np, pd, wmape):
 
         `use_arrivals`, `use_dummies`, `use_trend` and `fourier_k` switch
         individual blocks on and off, so the same code produces every column of
-        the ablation table. Mirrors `pipeline/tests/test_aggregate_link.py`
-        exactly.
+        the ablation table.
         """
         rows = []
         for yr in sorted(matched.year.unique()):
@@ -1631,9 +1628,9 @@ def _(
     # market leaves four and the correlation is not reported for that year.
     assert set(mix_ablation.year) == {2015, 2016, 2022}, sorted(mix_ablation.year)
 
-    # Market figures are pinned to the values printed by
-    # pipeline/tests/test_market_link.py, so the notebook cannot quietly tell a
-    # different story from the published report.
+    # Market figures are pinned to the values recorded in docs/METHODS.md,
+    # so the notebook cannot quietly tell a different story from the
+    # published findings.
     expected_mix = {
         2015: (9, 0.728, 0.433, 3, 40.3),
         2016: (9, 0.862, 0.633, 4, 39.8),
@@ -1688,9 +1685,9 @@ def _(
     | markets under 20 legs | 39 of 62 | {n_thin20} of {n_markets} | pass |
 
     The scripts in `pipeline/` remain the canonical implementations.
-    Every market figure and every holdout figure above is asserted equal to the
-    value printed by `test_market_link.py` and `test_aggregate_link.py`, so the
-    notebook fails loudly rather than drifting from the published reports.
+    Every market figure and every holdout figure above is asserted against the
+    values recorded in `docs/METHODS.md`, so the notebook fails loudly rather
+    than drifting from them.
     """)
     return
 

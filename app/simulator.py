@@ -215,6 +215,13 @@ def one_change_scenarios(scenario: Scenario):
     return out
 
 
+def _table(df: pd.DataFrame, formats: dict) -> None:
+    """Render a formatted, index-less dataframe at full width."""
+    st.dataframe(
+        df.style.format(formats, na_rep="—"), width="stretch", hide_index=True
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
@@ -537,12 +544,9 @@ with results_tab:
                         "Δ %": 100.0 * (s - b) / b if b else 0.0,
                     }
                 )
-            st.dataframe(
-                pd.DataFrame(stage_rows).style.format(
-                    {"Baseline": "{:,.0f}", "Scenario": "{:,.0f}", "Δ": "{:+,.0f}", "Δ %": "{:+.2f}%"}
-                ),
-                width="stretch",
-                hide_index=True,
+            _table(
+                pd.DataFrame(stage_rows),
+                {"Baseline": "{:,.0f}", "Scenario": "{:,.0f}", "Δ": "{:+,.0f}", "Δ %": "{:+.2f}%"},
             )
             st.caption(
                 "The parametric chain under the same scenario — every ratio "
@@ -585,13 +589,7 @@ with results_tab:
                 xaxis_title="Δ Guest-nights vs baseline",
             )
             st.plotly_chart(cfig, width="stretch")
-            st.dataframe(
-                contrib.style.format(
-                    {"Δ Guest-nights": "{:+,.0f}", "Δ New arrivals": "{:+,.0f}"}
-                ),
-                width="stretch",
-                hide_index=True,
-            )
+            _table(contrib, {"Δ Guest-nights": "{:+,.0f}", "Δ New arrivals": "{:+,.0f}"})
             st.caption(
                 "Each change scored alone against the baseline. Contributions "
                 "are non-linear and need not sum to the combined result — that "
@@ -623,17 +621,14 @@ with results_tab:
         market_delta["market"] = market_delta["market"].map(
             lambda m: f"{m} ← {new_origin_map[m]} (analog)" if m in new_origin_map else m
         )
-        st.dataframe(
+        _table(
             market_delta[
                 ["market", "BaseNights", "ScenNights", "ΔNights", "ΔArrivals", "ΔSeats"]
-            ].style.format(
-                {
-                    "BaseNights": "{:,.0f}", "ScenNights": "{:,.0f}",
-                    "ΔNights": "{:+,.0f}", "ΔArrivals": "{:+,.0f}", "ΔSeats": "{:+,.0f}",
-                }
-            ),
-            width="stretch",
-            hide_index=True,
+            ],
+            {
+                "BaseNights": "{:,.0f}", "ScenNights": "{:,.0f}",
+                "ΔNights": "{:+,.0f}", "ΔArrivals": "{:+,.0f}", "ΔSeats": "{:+,.0f}",
+            },
         )
 
 # --- insights ----------------------------------------------------------------
@@ -677,24 +672,21 @@ with insights_tab:
         xaxis_title="Hotel guests per 1,000 available seats",
     )
     st.plotly_chart(ifig, width="stretch")
-    st.dataframe(
+    _table(
         ranked[
             [
                 "market", "Guests", "NewArrivals", "Seats",
                 "Guests per 1,000 seats", "Arrivals per 1,000 seats",
                 "Capture (arrivals/P2P)", "ALOS (nights/arrival)",
             ]
-        ].style.format(
-            {
-                "Guests": "{:,.0f}", "NewArrivals": "{:,.0f}", "Seats": "{:,.0f}",
-                "Guests per 1,000 seats": "{:,.1f}",
-                "Arrivals per 1,000 seats": "{:,.1f}",
-                "Capture (arrivals/P2P)": "{:,.2f}",
-                "ALOS (nights/arrival)": "{:,.2f}",
-            }
-        ),
-        width="stretch",
-        hide_index=True,
+        ],
+        {
+            "Guests": "{:,.0f}", "NewArrivals": "{:,.0f}", "Seats": "{:,.0f}",
+            "Guests per 1,000 seats": "{:,.1f}",
+            "Arrivals per 1,000 seats": "{:,.1f}",
+            "Capture (arrivals/P2P)": "{:,.2f}",
+            "ALOS (nights/arrival)": "{:,.2f}",
+        },
     )
     st.caption(
         "Capture above 1.0 is the join defect in plain sight (five markets "
@@ -723,16 +715,13 @@ with insights_tab:
         .sort_values("weekly_seats", ascending=False)
     )
     market_pick = st.selectbox("Market", options=markets, key="route_market")
-    st.dataframe(
-        route_stats[route_stats["market"] == market_pick].style.format(
-            {
-                "weekly_seats": "{:,.0f}",
-                "weekly_flights": "{:,.1f}",
-                "monthly_seats": "{:,.0f}",
-            }
-        ),
-        width="stretch",
-        hide_index=True,
+    _table(
+        route_stats[route_stats["market"] == market_pick],
+        {
+            "weekly_seats": "{:,.0f}",
+            "weekly_flights": "{:,.1f}",
+            "monthly_seats": "{:,.0f}",
+        },
     )
 
 # --- validation ---------------------------------------------------------------
@@ -741,8 +730,8 @@ with validation_tab:
     st.markdown(
         "The hybrid is scored on the competition test window (2025-08..2026-02) "
         "against actual New Arrivals — a window the model never trained on. The "
-        "packaged test (`pipeline/tests/test_simulator_package.py`) asserts the "
-        "same pins the notebook commits to."
+        "replay below re-fits that window on demand and surfaces the pinned "
+        "numbers live."
     )
     if st.button("Replay the T5 competition window (trains on demand, ≈40 s)"):
         with st.spinner("Training the competition-window ensemble…"):
@@ -853,13 +842,9 @@ with library_tab:
                 }
             )
         listing = pd.DataFrame(rows).sort_values("saved_at", ascending=False)
-        st.dataframe(
-            listing[["scenario", "saved_at", "Δ Guest-nights", "Δ New arrivals", "Δ %"]].style.format(
-                {"Δ Guest-nights": "{:+,.0f}", "Δ New arrivals": "{:+,.0f}", "Δ %": "{:+.2f}%"},
-                na_rep="—",
-            ),
-            width="stretch",
-            hide_index=True,
+        _table(
+            listing[["scenario", "saved_at", "Δ Guest-nights", "Δ New arrivals", "Δ %"]],
+            {"Δ Guest-nights": "{:+,.0f}", "Δ New arrivals": "{:+,.0f}", "Δ %": "{:+.2f}%"},
         )
 
         with st.expander("Download saved scenarios"):

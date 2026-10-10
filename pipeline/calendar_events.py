@@ -306,7 +306,7 @@ def monthly_features(periods) -> pd.DataFrame:
         raise ValueError(
             f"requested periods {idx.min()}..{idx.max()} fall outside the pinned "
             f"calendar {COVERED_FROM}..{COVERED_TO}. Extend EXPECTED_WINDOWS and "
-            "COVERED_FROM/TO first, and re-run pipeline/tests/test_calendar_events.py."
+            "COVERED_FROM/TO first."
         )
 
     ndays = idx.days_in_month.to_numpy()
