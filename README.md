@@ -12,7 +12,7 @@ Start at [`docs/METHODS.md`](docs/METHODS.md).
 | Methods, results and decisions (start here) | [`docs/METHODS.md`](docs/METHODS.md) |
 | Hybrid layer: parametric chain + LightGBM (Phases 3–4) | `notebooks/hybrid_layer.py` |
 | Competition-pack loader | `pipeline/competition/` |
-| Interactive simulator | `app/simulator.py` (stub — see [Open work](#open-work)) |
+| Interactive simulator | [`app/simulator.py`](app/simulator.py) — built; see [app/README.md](app/README.md) |
 
 The models run **entirely on the licensed competition pack**. An earlier public-data
 investigation (Phase 1) returned a negative result — air arrivals are not a usable
@@ -107,12 +107,25 @@ simulator cannot silently drift from the deliverable.
 
 ## Streamlit simulator
 
-The parametric chain and the hybrid layer are packaged as an importable API for
-the interactive front end. `app/simulator.py` is a stub the UI contributor
-builds on; the model side is ready and guarded:
+The parametric chain and the hybrid layer are packaged as an importable API, and
+`app/simulator.py` is the built front end. Run it from the repository root:
+
+```
+.venv/bin/streamlit run app/simulator.py
+```
+
+It loads the fitted cache from `outputs/models/` when present (otherwise it fits
+the pack once, ~1–2 minutes, and saves the cache), and exposes the brief's five
+questions as scenario rows: new routes, frequency changes, seat/aircraft
+changes, load-factor shifts and seasonal market-mix shifts. A second page,
+**`/chatbot`**, is an OpenRouter-backed agent that answers open-ended questions
+by calling tools that score the real model (`.env.example` holds the key and
+model config). See
+[`app/README.md`](app/README.md) for the question-to-lever mapping, the
+chatbot setup and the read-before-trusting notes.
 
 ```python
-from pipeline.simulator import Simulator, Scenario
+from pipeline.simulator import Simulator, Scenario, RouteEdit
 sim = Simulator().fit()                       # trains only the requested window
 sim.monthly(Scenario(seats_mult=1.2))         # aggregate view — safe by default
 sim.market(Scenario(seats_mult=1.2))          # market view — flagged supply-side-only
@@ -121,13 +134,19 @@ sim.save()                                    # optional cache -> outputs/models
 
 Supply levers (`seats_mult`, `lf_mult`, `p2p_mult`) rewrite the supply frame, so
 the hybrid's features and Poisson exposure respond non-linearly;
-`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. Fitting is lazy
-and per-window (`full` for scenarios, `competition` for the T5 replay); a fitted
-simulator can be pickled with `save()`/`load()` to spare the refit. Because of
-the market-join defect in §4.5, `market()` rows carry
-`attrs["data_status"] == "supply-side-only"` (and a matching `data_status`
-column) and scenarios cannot invent new markets, zero a supply lever, or run
-past the event calendar's 2026-02 horizon. See
+`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. `RouteEdit`
+rows are signed and dated (`seats_per_week` opens or trims; `started_period`
+..`ended_period` scopes the window), `market_seats_mult` / `market_lf_mult`
+scale one market, and a `label` marks a new origin modelled on an analog market.
+Fitting is lazy and per-window (`full` for scenarios, `competition` for the T5
+replay); `save()`/`load()` pickle the fitted state, including the categorical
+encodings, so a fresh process loads without the pack. Because of the market-join
+defect in §4.5, `market()` rows carry `attrs["data_status"] ==
+"supply-side-only"` (and a matching `data_status` column) and scenarios cannot
+invent new markets, zero a supply lever, or run past the event calendar's
+2028-12 horizon. Observed supply ends 2026-02; later months hold forward the
+same calendar month one year earlier and every supply row is marked `basis`
+observed / projected / scenario. See
 [`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility).
 
 ## Notebooks
@@ -245,7 +264,7 @@ in sign, small. Source-market public holidays are still not covered; see
 
 | # | Criterion | Where |
 | --- | --- | --- |
-| 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` stub |
+| 01 | Working simulator, not a report | [`app/simulator.py`](app/simulator.py) — scenario builder, contribution bars, save/compare library |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
@@ -262,15 +281,17 @@ in sign, small. Source-market public holidays are still not covered; see
   residence/nationality on the flight side, or all output must be re-scoped to
   aggregate — which costs success criteria 01, 05 and 06. See
   [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
-- **Simulator ready; only the UI remains.** The chain and the learned layer are
-  packaged behind one API in `pipeline/hybrid.py` + `pipeline/simulator.py`
-  (`Scenario`/`Simulator`, six levers, route edits, an attribution guard), and
-  the notebook now delegates to the same code. The interactive front end on top
-  of `app/simulator.py` does not exist yet. Its market breakdown and
-  `seats_mult` lever must be withheld or labelled supply-side-only.
-- **Serve the ML layer.** Done for planning use: `Simulator().fit()` trains the
-  hybrid end to end and `market()`/`monthly()` score scenarios with the learned
-  capture; the remaining work is the UI that exposes it.
+- **Simulator is built and served.** The chain and the learned layer are
+  packaged in `pipeline/hybrid.py` + `pipeline/simulator.py`
+  (`Scenario`/`Simulator`, signed and dated route edits, market levers, an
+  attribution guard), and `app/simulator.py` exposes them with a scenario
+  builder, monthly/seasonal baseline-vs-scenario views, one-at-a-time
+  contribution bars, a supply-side-only market breakdown, a route explorer, a
+  live T5 replay and a save/compare library. Market-level output remains
+  labelled supply-side-only, and a new origin is explicitly an analog estimate.
+- **Remaining UI polish (optional):** per-market confidence intervals, a
+  scheduled refresh of the held-forward baseline when new schedules arrive, and
+  turning guest-night impact into occupancy once room-capacity data exists.
 - **52 air-only origins** have no measured hotel capture rate. OpenSky data in
   `data/raw/opensky/` is intended to close this and is not yet consumed; it is
   pulled by `tools/fetch_opensky.py`, which spends credits and so has not been
@@ -286,6 +307,8 @@ in sign, small. Source-market public holidays are still not covered; see
 | `README.md` | this file — submission overview, setup, how to run |
 | [`docs/METHODS.md`](docs/METHODS.md) | **start here** — methods, results, decision log, reproducibility |
 | [`docs/competition-brief.md`](docs/competition-brief.md) | challenge framing (provided by the organisers) |
+| [`app/README.md`](app/README.md) | the Streamlit simulator — question-to-lever mapping, caveats, deployment |
+| [`docs/PITCH_DECK.md`](docs/PITCH_DECK.md) | 10-page product pitch deck source |
 
 The seven generated diagnostics reports (`market_link_test.md`,
 `aggregate_link_test.md`, `retarget_test.md`, `p2p_vs_pax_test.md`,

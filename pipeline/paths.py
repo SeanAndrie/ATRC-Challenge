@@ -141,5 +141,9 @@ REPORT_MARKET_ORIGIN = OUTPUTS / "market_origin_validation_test.md"
 # the fit-on-demand path instead.
 MODELS = OUTPUTS / "models"
 
+# Saved scenario runs from the Streamlit simulator: one parquet of monthly
+# results plus a JSON spec per run. Also gitignored via /outputs/*.
+SESSIONS = OUTPUTS / "sessions"
+
 # OpenSky REST credentials, used by tools/fetch_opensky.py and the window-cost tool.
 CREDENTIALS = ROOT / "credentials.json"

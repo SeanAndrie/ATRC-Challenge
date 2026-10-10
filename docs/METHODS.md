@@ -816,8 +816,9 @@ notebook's Part A/B cells now delegate to it (thin cells that bind the same
 names), so the notebook's pinned Part C numbers *are* the packaged model's
 numbers, and `test_simulator_package.py` re-fits the package and pins it again
 (for the T5 competition window, WMAPE within `20.8 ± 2.0` with aggregate bias
-near `-0.1%`). The test takes ~75s: it fits the `full` window once, then the
-`competition` window on demand.
+near `-0.1%`). The test takes ~2–3 minutes: it fits the `full` window once, then
+the `competition` window on demand, and re-scores scenario levers including a
+fresh-process `load()` round trip.
 
 ```
 from pipeline.simulator import Simulator, Scenario, RouteEdit
@@ -831,27 +832,38 @@ Fitting is **lazy and per-window**: `Simulator(window=...)` selects the model
 default scenarios are scored with, and `fit()` trains only that window
 (`full` for scenario work, `competition` for `reproduce_competition_window`).
 `save()`/`load()` pickle the fitted state to `outputs/models/` (gitignored) to
-spare the ~1-minute refit on a Streamlit restart; no artifact is required, and a
-fresh fit yields identical predictions.
+spare the ~1–2-minute refit on a Streamlit restart; the payload carries the
+hybrid module's categorical encodings so a fresh process loads without reading
+the pack, no artifact is required, and a fresh fit yields identical predictions.
 
 Lever semantics are documented in the `simulator.py` docstring: the three
 supply levers re-enter the model's features *and* its Poisson exposure offset
 pre-score (so the hybrid responds non-linearly); `capture_mult`, `season_mult`
-and `alos_mult` are post-hoc dials. Simulation is bounded by the model's own
-world: markets are a fixed 33-level categorical (new markets and
-out-of-horizon route edits raise), supply levers must be positive (a zeroed
-lever is rejected, not silently degenerated), and the horizon stops at the event
-calendar's `COVERED_TO` = 2026-02. Because the §4.5 join is structurally wrong
-at market level, `market()` returns rows flagged
+and `alos_mult` are post-hoc dials. `RouteEdit` rows are signed and dated —
+`seats_per_week` opens or trims a route, `started_period`..`ended_period`
+(default to the horizon) scopes the edit, and a `label` marks a new origin that
+is modelled on an analog market because the categorical cannot admit new
+levels. `market_seats_mult` / `market_lf_mult` scale one market's seats or fill
+rate. Simulation is bounded by the model's own world: markets are a fixed
+33-level categorical, supply levers must be positive (a zeroed lever is
+rejected, not silently degenerated), and the horizon runs to the event
+calendar's `COVERED_TO` = 2028-12 — observed supply ends 2026-02 and later
+months hold forward the same calendar month one year earlier, with every supply
+row marked `basis` observed / projected / scenario. Because the §4.5 join is
+structurally wrong at market level, `market()` returns rows flagged
 `attrs["data_status"] == "supply-side-only"` **and** a constant `data_status`
 column (the attr is lost by `groupby`/serialization; the column survives), and
 the UI must not present market levels as measured; the aggregate views are the
 defaults for a reason.
 
-The Streamlit front end (`app/simulator.py`) is deliberately left as a stub for
-a UI contributor; the model side is complete, deterministic
-(`deterministic=True`, fixed seeds, single thread) and fit-on-demand from the
-competition pack — predictions are identical to the notebook's.
+The Streamlit front end (`app/simulator.py`) is built: a scenario builder for
+route/frequency/seat/load-factor/market-mix changes, baseline-vs-scenario
+monthly and seasonal views, one-at-a-time contribution bars (the brief's
+sensitivity question), a supply-side-only market table, the route explorer and
+market ranking, a live T5 validation replay, and a save/compare scenario
+library under `outputs/sessions/`. New origins are analog estimates and are
+labelled as such throughout; occupancy is not computed because the pack has no
+room-capacity data, so winter impact is reported in guest-nights.
 
 ---
 

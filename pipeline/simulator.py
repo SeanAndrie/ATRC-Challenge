@@ -15,8 +15,10 @@ default scenarios are scored with, and ``fit()`` trains **only that window**:
 * ``"full"`` -- the default scenario model. Iteration count is chosen on the
   internal last-6-month tail (the notebook's T4 protocol), then the 5-seed
   ensemble is refit on the whole training panel (2022-01..2025-07). Scenarios
-  therefore fly the model forward over any month the pack covers (up to
-  ``COVERED_TO`` = 2026-02).
+  fly the model forward to ``COVERED_TO`` = 2028-12: observed supply ends at
+  2026-02 and the remaining months use a held-forward seasonal baseline (see
+  ``route_supply()``), with every supply row marked ``basis`` =
+  observed / projected / scenario.
 * ``"competition"`` -- the T5 protocol (iterations on the leave-tail holdout).
   ``reproduce_competition_window`` trains it on demand and replays the pinned
   numbers live.
@@ -41,9 +43,16 @@ Lever semantics
   single market on top of the global ``seats_mult`` (a per-market multiplier,
   not a cap); unknown market names and non-positive values are rejected. A tuple
   keeps ``Scenario`` genuinely immutable.
-* ``RouteEdit`` appends terminating supply for an existing market from a start
-  month onward (a new route, or extra seats on an existing market), with PAX/P2P
-  estimated at the market's average load factor and P2P share.
+* ``market_lf_mult`` is the load-factor twin of ``market_seats_mult``: a tuple
+  of ``(market, multiplier)`` pairs scaling one market's fill rate on top of the
+  global ``lf_mult``.
+* ``RouteEdit`` edits terminating supply for a model market over an inclusive
+  month range (``started_period``..``ended_period``, default through
+  ``COVERED_TO``). ``seats_per_week`` is signed: positive opens or grows a
+  route, negative trims one (aggregate supply is floored at zero; the caller
+  should keep reductions within the route's own weekly seats). PAX/P2P are
+  estimated at the market's average load factor and P2P share, and ``label``
+  names a new origin whose demand is modelled on an analog market.
 
 Attribution guard (docs/METHODS.md §4.5)
 
@@ -53,8 +62,10 @@ Attribution guard (docs/METHODS.md §4.5)
   ``groupby`` and serialization; the UI must not present market levels as
   measured.
 * Scenarios cannot invent new markets (the model's ``market`` categorical is a
-  fixed 33-level encoding) and cannot start supply past ``COVERED_TO`` = 2026-02
-  (the event calendar's horizon); both produce clear errors.
+  fixed 33-level encoding): a genuinely new origin is modelled on a chosen
+  analog market and its delta read from that market. Supply edits must lie
+  within ``COVERED_FROM``..``COVERED_TO`` (the event calendar's horizon); bad
+  months, unknown markets and zeroed levers all produce clear errors.
 """
 
 from __future__ import annotations
@@ -91,18 +102,26 @@ SUPPLY_LEVERS = ("seats_mult", "lf_mult", "p2p_mult")
 
 @dataclass(frozen=True)
 class RouteEdit:
-    """Add terminating supply for an existing market from ``started_period`` on.
+    """Edit terminating supply for one model market over a month range.
 
-    PAX and P2P are estimated at the market's average load factor and P2P share
-    observed over the fit window, so the added seats convert like the market's
-    history. Supply is applied monthly (``seats_per_week * days_in_month / 7``).
+    ``seats_per_week`` is signed: positive adds supply (a new route or extra
+    seats on an existing one), negative trims it. PAX and P2P are estimated at
+    the model market's average load factor and P2P share observed over the pack,
+    so the added seats convert like the market's history; supply is applied
+    monthly (``seats_per_week * days_in_month / 7``). ``ended_period`` is
+    inclusive and defaults to the calendar horizon, which makes winter-only or
+    seasonal edits possible. ``label`` is display-only: a new origin (say
+    KENYA) is encoded on an analog market (say INDIA) and its delta read from
+    that market, because the model's categorical cannot admit new levels.
     """
 
     market: str
     city: str
     airline: str
     seats_per_week: float
-    started_period: str  # e.g. "2025-09", within COVERED_FROM..COVERED_TO
+    started_period: str  # e.g. "2026-11", a month within COVERED_FROM..COVERED_TO
+    ended_period: str | None = None  # inclusive; None = through COVERED_TO
+    label: str | None = None  # display name for an analog-market new origin
 
 
 @dataclass(frozen=True)
@@ -114,6 +133,7 @@ class Scenario:
     alos_mult: float = 1.0
     season_mult: float = 1.0
     market_seats_mult: tuple = ()  # ((market, multiplier), ...)
+    market_lf_mult: tuple = ()  # ((market, multiplier), ...)
     routes: tuple = ()
 
 
@@ -196,7 +216,7 @@ class Simulator:
         new_arr = pred * scenario.capture_mult * scenario.season_mult
         out = scaled[
             ["ym_str", "ym", "market", "month", "routes", "airlines",
-             "Total_Seats", "PAX", "P2P"]
+             "Total_Seats", "PAX", "P2P", "basis"]
         ].copy()
         out["NewArrivalHat"] = new_arr
         out["GuestNightsHat"] = new_arr * alos * scenario.alos_mult
@@ -264,6 +284,16 @@ class Simulator:
         self._require_data()
         return self.params["capture"].copy()
 
+    def validate_scenario(self, scenario: Scenario) -> None:
+        """Raise ``ValueError`` if ``scenario`` cannot be scored.
+
+        A convenience for the UI: the same checks prediction runs, surfaced
+        before any model work so bad periods, unknown markets or degenerate
+        levers read as form errors rather than stack traces.
+        """
+        self._require_data()
+        self._validate(scenario)
+
     def reproduce_competition_window(self):
         """Train the competition window if needed and replay the T5 protocol.
 
@@ -288,10 +318,12 @@ class Simulator:
 
     # -- persistence ---------------------------------------------------------
     def save(self, path: str | Path | None = None) -> Path:
-        """Pickle the fitted state (params + supply cache + boosters).
+        """Pickle the fitted state (params + supply cache + boosters + dtypes).
 
         Defaults to ``outputs/models/simulator_<window>.pkl`` (gitignored). The
-        artifact is a cache; predictions from a re-fit are identical.
+        artifact is a cache; predictions from a re-fit are identical. The
+        categorical encodings ride along so ``load()`` works in a fresh process
+        without re-reading the competition pack.
         """
         self._require_data()
         p = Path(path) if path is not None else paths.MODELS / f"simulator_{self.window}.pkl"
@@ -305,6 +337,7 @@ class Simulator:
             "base_routes": self._base_routes,
             "boosters": self._boosters,
             "best_iter": self._best_iter,
+            "dtypes": H.categorical_dtypes(),
         }
         with p.open("wb") as fh:
             pickle.dump(payload, fh)
@@ -312,11 +345,21 @@ class Simulator:
 
     @classmethod
     def load(cls, path: str | Path | None = None, window: str | None = None) -> "Simulator":
-        """Load a simulator saved by ``save()``."""
+        """Load a simulator saved by ``save()``.
+
+        Restores the hybrid module's categorical encodings from the payload. An
+        older pickle without them falls back to ``build_panels()``, which needs
+        the pack on disk.
+        """
         w = window or "full"
         p = Path(path) if path is not None else paths.MODELS / f"simulator_{w}.pkl"
         with p.open("rb") as fh:
             payload = pickle.load(fh)
+        mkt_dtype, mon_dtype = payload.get("dtypes", (None, None))
+        if mkt_dtype is None or mon_dtype is None:
+            H.build_panels()
+        else:
+            H.set_categorical_dtypes(mkt_dtype, mon_dtype)
         obj = cls(window=window or payload["window"])
         obj.params = payload["params"]
         obj.fa = payload["fa"]
@@ -328,89 +371,158 @@ class Simulator:
         obj._data_ready = True
         return obj
 
+    def route_supply(self) -> pd.DataFrame:
+        """Route-grain baseline supply (observed + projected). A copy, so the
+        caller can filter or join without mutating the fitted state.
+
+        Columns: ``ym, market, city, airline, Total_Seats, Total_PAX,
+        Total_P2P, Total_Transfer, Total_Transit, flights_per_week, basis``.
+        ``basis`` is ``"observed"`` for pack months (through 2026-02) and
+        ``"projected"`` beyond it, where each month holds forward the same
+        calendar month one year earlier.
+        """
+        self._require_data()
+        return self._base_routes.copy()
+
     # -- supply assembly -----------------------------------------------------
     def _build_base_routes(self) -> pd.DataFrame:
         """Route-grain supply (market, city, airline, month), cached once.
 
         Route grain is kept -- not market grain -- so a ``RouteEdit`` can add a
         city/airline row and have ``routes``/``airlines`` recount correctly.
+        ``flights_per_week`` supports the UI's frequency/aircraft calculators;
+        transfer/transit ride along so scenario frames never re-join ``fa``.
         """
         rows = cl.flights_monthly()[
             ["ym", "Departure Country Name", "Departure City", "Airline Name",
-             "Total_Seats", "Total_PAX", "Total_P2P"]
+             "Total_Seats", "Total_PAX", "Total_P2P", "Total_Transfer",
+             "Total_Transit", "flights_per_week_median"]
         ].rename(
             columns={
                 "Departure Country Name": "market",
                 "Departure City": "city",
                 "Airline Name": "airline",
+                "flights_per_week_median": "flights_per_week",
             }
         ).copy()
         rows["market"] = rows["market"].str.upper().str.strip()
         rows["ym"] = pd.PeriodIndex(rows["ym"], freq="M")
-        return rows
+        rows["basis"] = "observed"
+        return self._project_routes(rows)
+
+    @staticmethod
+    def _project_routes(rows: pd.DataFrame) -> pd.DataFrame:
+        """Hold the last observed same-month schedule forward to ``COVERED_TO``.
+
+        The pack's supply ends at 2026-02; scenarios for the next winter would
+        otherwise have no baseline. Each future month copies the same calendar
+        month one year earlier -- chaining through months that are themselves
+        projected -- so seasonality carries forward while no new airline
+        schedule is invented. Copied rows are marked ``basis="projected"``.
+        """
+        last = rows["ym"].max()
+        if last >= COVERED_TO:
+            return rows
+        by_month = {ym: group for ym, group in rows.groupby("ym")}
+        parts = [rows]
+        ym = last + 1
+        while ym <= COVERED_TO:
+            source = by_month.get(ym - 12)
+            if source is not None and len(source):
+                new = source.copy()
+                new["ym"] = ym
+                new["basis"] = "projected"
+                by_month[ym] = new
+                parts.append(new)
+            ym += 1
+        return pd.concat(parts, ignore_index=True)
 
     def _scenario_supply(self, scenario: Scenario):
         """Build raw (route edits, no multipliers) and scaled supply frames.
 
         Both are at market x month grain with the feature columns the model and
-        chain need. ``scaled`` applies the supply multipliers, which rewrite
-        ``Total_Seats`` and re-derive PAX/P2P so features and the exposure offset
-        respond; ``raw`` (used by ``chain``) carries the same seats/PAX/P2P, so
-        ``Scenario()`` exactly reproduces ``fa``.
+        chain need. Route edits are signed and dated, so a scenario can open a
+        winter-only route or trim an airline's weekly seats. ``scaled`` applies
+        the supply multipliers, which rewrite ``Total_Seats`` and re-derive
+        PAX/P2P so features and the exposure offset respond; ``raw`` (used by
+        ``chain``) carries the same seats/PAX/P2P, so ``Scenario()`` exactly
+        reproduces ``fa`` on observed months. Market-months whose seats net to
+        zero are dropped: no flights means no modelled demand.
         """
         self._require_data()
         self._validate(scenario)
         rows = self._base_routes.copy()
 
+        edit_frames = []
         for e in scenario.routes:
             mkt = e.market.upper().strip()
             start = pd.Period(e.started_period, freq="M")
-            if start < COVERED_FROM or start > COVERED_TO:
-                raise ValueError(
-                    f"RouteEdit started_period {start} must be within "
-                    f"{COVERED_FROM}..{COVERED_TO}."
-                )
+            end = COVERED_TO if e.ended_period is None else pd.Period(e.ended_period, freq="M")
             fa_m = self.fa[self.fa["market"] == mkt]
-            if fa_m.empty:
-                raise ValueError(
-                    f"RouteEdit market {mkt!r} is not one of the 33 flight "
-                    "markets; new markets cannot be encoded by the model."
-                )
             lf = fa_m["Total_PAX"].sum() / max(fa_m["Total_Seats"].sum(), 1.0)
             share = fa_m["Total_P2P"].sum() / max(fa_m["Total_PAX"].sum(), 1.0)
-            new_rows = []
-            for offset in range(0, int((COVERED_TO - start).n) + 1):
-                ym = start + offset
-                seats = e.seats_per_week * ym.days_in_month / 7.0
-                pax = seats * lf
-                new_rows.append(
+            periods = pd.period_range(start, end, freq="M")
+            seats = e.seats_per_week * periods.days_in_month / 7.0
+            edit_frames.append(
+                pd.DataFrame(
                     {
-                        "ym": ym, "market": mkt, "city": e.city, "airline": e.airline,
-                        "Total_Seats": seats, "Total_PAX": pax, "Total_P2P": pax * share,
+                        "ym": periods,
+                        "market": mkt,
+                        "city": e.city,
+                        "airline": e.airline,
+                        "Total_Seats": seats,
+                        "Total_PAX": seats * lf,
+                        "Total_P2P": seats * share,
+                        "Total_Transfer": 0.0,
+                        "Total_Transit": 0.0,
+                        "flights_per_week": 0.0,
+                        "basis": "scenario",
                     }
                 )
-            if new_rows:
-                rows = pd.concat([rows, pd.DataFrame(new_rows)], ignore_index=True)
+            )
+        if edit_frames:
+            rows = pd.concat([rows, *edit_frames], ignore_index=True)
 
-        agg = rows.groupby(["ym", "market"], dropna=False).agg(
-            Total_Seats=("Total_Seats", "sum"),
-            Total_PAX=("Total_PAX", "sum"),
-            Total_P2P=("Total_P2P", "sum"),
-            routes=("city", lambda s: s.nunique()),
-            airlines=("airline", lambda s: s.nunique()),
-        ).reset_index()
-        agg = agg.merge(
-            self.fa[["ym", "market", "Total_Transfer", "Total_Transit"]],
-            on=["ym", "market"],
-            how="left",
-        ).fillna({"Total_Transfer": 0.0, "Total_Transit": 0.0})
+        # Counts only over routes that actually operate: a reduction that zeroes
+        # a route must drop it from routes/airlines, and negative edit rows are
+        # not routes.
+        positive = rows[rows["Total_Seats"] > 0]
+        counts = (
+            positive.groupby(["ym", "market"], dropna=False)
+            .agg(routes=("city", "nunique"), airlines=("airline", "nunique"))
+            .reset_index()
+        )
+        priority = {"observed": 0, "projected": 1, "scenario": 2}
+        rows["_pri"] = rows["basis"].map(priority).fillna(0).astype(int)
+        agg = (
+            rows.groupby(["ym", "market"], dropna=False)
+            .agg(
+                Total_Seats=("Total_Seats", "sum"),
+                Total_PAX=("Total_PAX", "sum"),
+                Total_P2P=("Total_P2P", "sum"),
+                Total_Transfer=("Total_Transfer", "sum"),
+                Total_Transit=("Total_Transit", "sum"),
+                pri=("_pri", "max"),
+            )
+            .reset_index()
+            .merge(counts, on=["ym", "market"], how="left")
+        )
+        agg[["routes", "airlines"]] = agg[["routes", "airlines"]].fillna(0).astype(int)
+        agg["basis"] = agg["pri"].map({v: k for k, v in priority.items()})
+        agg = agg.drop(columns="pri")
+
+        # A reduction can overshoot a small market-month; floor supply at zero
+        # rather than emit negative seats (the UI checks route-level overshoot).
+        for col in ("Total_Seats", "Total_PAX", "Total_P2P", "Total_Transfer", "Total_Transit"):
+            agg[col] = agg[col].clip(lower=0)
+        agg = agg[agg["Total_Seats"] > 0].copy()
         agg["ym_str"] = agg["ym"].astype(str)
         agg["month"] = agg["ym"].dt.month
 
         raw = agg[
             ["ym_str", "ym", "market", "month", "routes", "airlines",
              "Total_Seats", "Total_PAX", "Total_P2P",
-             "Total_Transfer", "Total_Transit"]
+             "Total_Transfer", "Total_Transit", "basis"]
         ].copy()
 
         # Scale supply: pre-model levers that rebake into features + exposure.
@@ -424,9 +536,10 @@ class Simulator:
             0.0,
         )
         cmult = self._market_mult(scenario, raw["market"])
+        lfmult = self._market_lf_mult(scenario, raw["market"])
         scaled = raw.copy()
         scaled["Total_Seats"] = raw["Total_Seats"] * cmult
-        scaled["Total_PAX"] = scaled["Total_Seats"] * lf * scenario.lf_mult
+        scaled["Total_PAX"] = scaled["Total_Seats"] * lf * scenario.lf_mult * lfmult
         scaled["Total_P2P"] = scaled["Total_PAX"] * share * scenario.p2p_mult
         scaled["PAX"] = scaled["Total_PAX"]
         scaled["P2P"] = scaled["Total_P2P"]
@@ -440,22 +553,70 @@ class Simulator:
                     f"got {getattr(scenario, name)!r}"
                 )
         known = set(self.fa["market"])
-        for mkt, mult in scenario.market_seats_mult:
+        for name, pairs in (
+            ("market_seats_mult", scenario.market_seats_mult),
+            ("market_lf_mult", scenario.market_lf_mult),
+        ):
+            for mkt, mult in pairs:
+                if mkt not in known:
+                    raise ValueError(
+                        f"{name} key {mkt!r} is not one of the 33 flight "
+                        "markets; new markets cannot be encoded by the model."
+                    )
+                if mult <= 0:
+                    raise ValueError(f"{name}[{mkt!r}] must be > 0; got {mult!r}")
+        for e in scenario.routes:
+            mkt = e.market.upper().strip()
             if mkt not in known:
                 raise ValueError(
-                    f"market_seats_mult key {mkt!r} is not one of the 33 flight "
-                    "markets; new markets cannot be encoded by the model."
+                    f"RouteEdit market {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model. Use an "
+                    "analog market and a label instead."
                 )
-            if mult <= 0:
+            if e.seats_per_week == 0:
+                raise ValueError("RouteEdit seats_per_week must be non-zero.")
+            try:
+                start = pd.Period(e.started_period, freq="M")
+            except Exception as exc:
                 raise ValueError(
-                    f"market_seats_mult[{mkt!r}] must be > 0; got {mult!r}"
+                    f"RouteEdit started_period {e.started_period!r} is not a "
+                    f"YYYY-MM month: {exc}"
+                ) from exc
+            if start < COVERED_FROM or start > COVERED_TO:
+                raise ValueError(
+                    f"RouteEdit started_period {start} must be within "
+                    f"{COVERED_FROM}..{COVERED_TO}."
                 )
+            if e.ended_period is not None:
+                try:
+                    end = pd.Period(e.ended_period, freq="M")
+                except Exception as exc:
+                    raise ValueError(
+                        f"RouteEdit ended_period {e.ended_period!r} is not a "
+                        f"YYYY-MM month: {exc}"
+                    ) from exc
+                if end < start:
+                    raise ValueError(
+                        f"RouteEdit ended_period {end} is before started_period {start}."
+                    )
+                if end > COVERED_TO:
+                    raise ValueError(
+                        f"RouteEdit ended_period {end} must be at most {COVERED_TO}."
+                    )
 
     @staticmethod
     def _market_mult(scenario: Scenario, markets) -> np.ndarray:
         mult = np.full(len(markets), scenario.seats_mult, dtype=float)
         keys = markets.to_numpy()
         for mkt, v in scenario.market_seats_mult:
+            mult[keys == mkt] *= v
+        return mult
+
+    @staticmethod
+    def _market_lf_mult(scenario: Scenario, markets) -> np.ndarray:
+        mult = np.ones(len(markets), dtype=float)
+        keys = markets.to_numpy()
+        for mkt, v in scenario.market_lf_mult:
             mult[keys == mkt] *= v
         return mult
 

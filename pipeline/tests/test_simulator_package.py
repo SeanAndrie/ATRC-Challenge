@@ -12,6 +12,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from pipeline import hybrid as H  # noqa: E402
+from pipeline.calendar_events import COVERED_TO  # noqa: E402
 from pipeline.simulator import RouteEdit, Scenario, Simulator  # noqa: E402
 
 # This is the ninth diagnostic. Unlike the other eight it writes NO report:
@@ -142,13 +143,64 @@ def main():
     ), "RouteEdit must raise chain New Arrivals"
     print("RouteEdit adds supply + arrivals ok")
 
-    # Guards: bad markets, bad values, degenerate supply, post-horizon supply,
-    # and unknown view filters must all fail loudly.
+    # The baseline now runs to the calendar horizon: observed months through
+    # 2026-02, then a held-forward seasonal projection (same month, year - 1).
+    supply = sim.route_supply()
+    assert set(supply["basis"]) == {"observed", "projected"}
+    assert supply["ym"].max() == COVERED_TO
+    print(f"baseline projects through {supply['ym'].max()} ok")
+
+    # Dated, signed edits: a winter-only trim touches only its window, and the
+    # basis marker distinguishes observed / projected / scenario supply.
+    base_i = sim._scenario_supply(Scenario())[1].set_index(["ym", "market"])
+    win = Scenario(routes=(RouteEdit("INDIA", "Mumbai", "Etihad", 1000.0, "2026-11", "2027-02"),))
+    win_i = sim._scenario_supply(win)[1].set_index(["ym", "market"])
+    for ym, changed in (("2026-10", False), ("2026-11", True), ("2027-02", True), ("2027-03", False)):
+        delta = win_i.loc[(ym, "INDIA"), "Total_Seats"] - base_i.loc[(ym, "INDIA"), "Total_Seats"]
+        if changed:
+            assert delta > 0, f"winter edit must raise {ym} seats"
+        else:
+            assert abs(delta) < 1e-9, f"winter edit must not touch {ym}"
+    assert base_i.loc[("2025-10", "INDIA"), "basis"] == "observed"
+    assert base_i.loc[("2026-10", "INDIA"), "basis"] == "projected"
+    assert win_i.loc[("2026-11", "INDIA"), "basis"] == "scenario"
+    print("dated winter edit + basis markers ok")
+
+    # Reductions floor at zero: an oversized negative edit removes the market
+    # from the frame instead of emitting negative seats.
+    neg = sim._scenario_supply(
+        Scenario(routes=(RouteEdit("INDIA", "X", "Y", -1e12, "2026-11"),))
+    )[1]
+    assert (neg["Total_Seats"] > 0).all(), "floored supply must stay positive"
+    nov = set(neg.loc[neg["ym"].astype(str) == "2026-11", "market"])
+    assert "INDIA" not in nov, "oversized reduction must drop INDIA from 2026-11"
+    print("negative edit floors at zero ok")
+
+    # A per-market load-factor multiplier scales exactly that market's PAX.
+    s0 = sim._scenario_supply(Scenario())[0].set_index(["ym", "market"])
+    s1 = sim._scenario_supply(Scenario(market_lf_mult=(("INDIA", 1.1),)))[0].set_index(["ym", "market"])
+    idx = s0.index.get_level_values("market")
+    a = s0.loc[idx == "INDIA", "Total_PAX"].sum()
+    b = s1.loc[idx == "INDIA", "Total_PAX"].sum()
+    assert abs(b / a - 1.1) < 1e-9, "market_lf_mult must scale INDIA PAX by 1.1"
+    assert (
+        abs(s0.loc[idx != "INDIA", "Total_PAX"].sum() - s1.loc[idx != "INDIA", "Total_PAX"].sum())
+        < 1e-6
+    ), "market_lf_mult must not touch other markets"
+    print("market_lf_mult scoped to its market ok")
+
+    # Guards: bad markets, bad values, degenerate supply, bad periods, unknown
+    # view filters must all fail loudly.
     bad_scenarios = [
         ("unknown RouteEdit market", dict(routes=(RouteEdit("NARNIA", "X", "Y", 1.0, "2025-09"),))),
-        ("post-horizon edit", dict(routes=(RouteEdit("CHINA", "X", "Y", 1.0, "2027-01"),))),
+        ("post-horizon edit", dict(routes=(RouteEdit("CHINA", "X", "Y", 1.0, "2029-01"),))),
+        ("malformed start month", dict(routes=(RouteEdit("CHINA", "X", "Y", 1.0, "next-winter"),))),
+        ("end before start", dict(routes=(RouteEdit("CHINA", "X", "Y", 1.0, "2026-11", "2026-05"),))),
+        ("zero route seats", dict(routes=(RouteEdit("CHINA", "X", "Y", 0.0, "2026-11"),))),
         ("unknown market_seats_mult key", dict(market_seats_mult=(("NARNIA", 1.2),))),
         ("zero market_seats_mult", dict(market_seats_mult=(("CHINA", 0.0),))),
+        ("unknown market_lf_mult key", dict(market_lf_mult=(("NARNIA", 1.2),))),
+        ("zero market_lf_mult", dict(market_lf_mult=(("CHINA", 0.0),))),
         ("zero seats_mult", dict(seats_mult=0.0)),
     ]
     for label, kw in bad_scenarios:
@@ -164,7 +216,10 @@ def main():
         pass
     print("guards ok")
 
-    # Persistence round-trip: a saved + loaded simulator predicts identically.
+    # Persistence round-trip: a saved + loaded simulator predicts identically,
+    # including after resetting the module's categorical encodings -- the
+    # fresh-process case, where load() must restore them from the payload
+    # rather than assume build_panels() already ran.
     with tempfile.TemporaryDirectory() as td:
         art = Path(td) / "sim.pkl"
         sim.save(art)
@@ -175,7 +230,14 @@ def main():
         assert abs(
             loaded.reproduce_competition_window().attrs["wm_na"] - wm
         ) < 1e-9
-    print("save/load round-trip ok")
+        H._MKT_DTYPE = None
+        H._MON_DTYPE = None
+        fresh = Simulator.load(art)
+        c = fresh.monthly(Scenario(seats_mult=1.2))
+        assert np.allclose(a.GuestNightsHat, c.GuestNightsHat), (
+            "load() must restore the categorical encodings by itself"
+        )
+    print("save/load round-trip ok (including fresh-process encodings)")
 
     print(f"\nALL SIMULATOR-PACKAGE PINS PASSED ({time.time()-t0:.0f}s)")
 

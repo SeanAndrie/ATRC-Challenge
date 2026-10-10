@@ -12,6 +12,9 @@ wheels/
 # OpenSky API Credentials
 credentials.json
 
+# OpenRouter chatbot credentials (template: .env.example)
+.env
+
 # marimo session cache. Regenerable; per-notebook run state, not source.
 notebooks/__marimo__/
 

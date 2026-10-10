@@ -61,6 +61,21 @@ def _require_dtypes() -> tuple[pd.CategoricalDtype, pd.CategoricalDtype]:
     return _MKT_DTYPE, _MON_DTYPE
 
 
+def categorical_dtypes() -> tuple[pd.CategoricalDtype | None, pd.CategoricalDtype | None]:
+    """The encodings ``build_panels()`` derived, or ``(None, None)`` before it runs."""
+    return _MKT_DTYPE, _MON_DTYPE
+
+
+def set_categorical_dtypes(mkt_dtype, mon_dtype) -> None:
+    """Restore encodings, e.g. after unpickling a saved simulator.
+
+    A pickled ``Simulator`` carries the fitted state but not this module's
+    globals, so ``Simulator.load()`` calls this instead of re-reading the pack.
+    """
+    global _MKT_DTYPE, _MON_DTYPE
+    _MKT_DTYPE, _MON_DTYPE = mkt_dtype, mon_dtype
+
+
 def build_panels():
     """Load the pack and build the analysable frames.
 

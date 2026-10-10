@@ -90,6 +90,12 @@ EXPECTED_MONTHS = {
     # A quiet month: every feature zero. Guards against a window bleeding across
     # a boundary it should not.
     "2023-08": {"eid_days": 0, "ramadan_days": 0, "natday_days": 0, "nye_days": 0},
+    # A projected year (Hijri 1448): the horizon now runs to 2028-12 so forward
+    # scenarios have a calendar. Ramadan starts 8 Feb 2027; its 29 days split
+    # 21/9 across February and March, and Eid al-Fitr's 3-day window with
+    # shoulders is 7-15 Mar = 9 days, all inside March.
+    "2027-02": {"ramadan_days": 21},
+    "2027-03": {"eid_days": 9, "ramadan_days": 9},
 }
 
 # Windows deliberately opened wider than the usual two days, with the reason.
@@ -156,9 +162,9 @@ def check_aggregation() -> list[str]:
 
     # Coverage guard: outside the pinned range this must raise, not return zeros.
     try:
-        monthly_features(pd.period_range("2026-03", "2026-04", freq="M"))
+        monthly_features(pd.period_range("2029-01", "2029-02", freq="M"))
     except ValueError:
-        notes.append("coverage guard raises for 2026-03..2026-04, as intended")
+        notes.append("coverage guard raises for 2029-01..2029-02, as intended")
     else:
         raise AssertionError("coverage guard did not raise outside COVERED_FROM..COVERED_TO")
 
@@ -236,8 +242,10 @@ def main() -> None:
         "the honest one; a monthly boolean would have collapsed both to a single\n"
         "bit and lost the magnitude.\n\n"
         "## Caveats\n\n"
-        f"* **Coverage is {COVERED_FROM} to {COVERED_TO}.** The test window ends\n"
-        "  2026-02. Beyond that the module raises rather than reporting zeros, so a\n"
+        f"* **Coverage is {COVERED_FROM} to {COVERED_TO}.** The competition test\n"
+        "  window ends 2026-02, but the simulator's forward scenarios need a\n"
+        "  calendar, so the pin table was extended through Hijri 1449 (2028-12).\n"
+        "  Beyond that the module raises rather than reporting zeros, so a\n"
         "  longer horizon needs the pin table extended and this test re-run.\n"
         "* **UAE-wide only.** These are destination-side events that hit every\n"
         "  source market at once. Public holidays in the source markets, the other\n"

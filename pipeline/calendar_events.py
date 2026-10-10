@@ -140,23 +140,29 @@ EXPECTED_WINDOWS = {
     (1445, 10, 1): (dt.date(2024, 4, 9), dt.date(2024, 4, 12)),
     (1446, 10, 1): (dt.date(2025, 3, 29), dt.date(2025, 4, 2)),
     (1447, 10, 1): (dt.date(2026, 3, 18), dt.date(2026, 3, 22)),
+    (1448, 10, 1): (dt.date(2027, 3, 8), dt.date(2027, 3, 13)),
+    (1449, 10, 1): (dt.date(2028, 2, 25), dt.date(2028, 3, 1)),
     # Eid al-Adha, 10 Dhu al-Hijjah.
     (1443, 12, 10): (dt.date(2022, 7, 8), dt.date(2022, 7, 11)),
     (1444, 12, 10): (dt.date(2023, 6, 27), dt.date(2023, 6, 30)),
     (1445, 12, 10): (dt.date(2024, 6, 15), dt.date(2024, 6, 18)),
     (1446, 12, 10): (dt.date(2025, 6, 5), dt.date(2025, 6, 8)),
     (1447, 12, 10): (dt.date(2026, 5, 26), dt.date(2026, 5, 29)),
+    (1448, 12, 10): (dt.date(2027, 5, 15), dt.date(2027, 5, 20)),
+    (1449, 12, 10): (dt.date(2028, 5, 3), dt.date(2028, 5, 8)),
     # Ramadan, 1 Ramadan.
     (1443, 9, 1): (dt.date(2022, 4, 1), dt.date(2022, 4, 4)),
     (1444, 9, 1): (dt.date(2023, 3, 22), dt.date(2023, 3, 25)),
     (1445, 9, 1): (dt.date(2024, 3, 10), dt.date(2024, 3, 13)),
     (1446, 9, 1): (dt.date(2025, 2, 17), dt.date(2025, 3, 3)),
     (1447, 9, 1): (dt.date(2026, 2, 17), dt.date(2026, 2, 20)),
+    (1448, 9, 1): (dt.date(2027, 2, 6), dt.date(2027, 2, 11)),
+    (1449, 9, 1): (dt.date(2028, 1, 26), dt.date(2028, 1, 31)),
 }
 
 #: Periods the pinned windows cover, inclusive.
 COVERED_FROM = pd.Period("2022-01", freq="M")
-COVERED_TO = pd.Period("2026-02", freq="M")
+COVERED_TO = pd.Period("2028-12", freq="M")
 
 
 def check_windows() -> pd.DataFrame:
@@ -289,9 +295,9 @@ def monthly_features(periods) -> pd.DataFrame:
     Raises
     ------
     ValueError
-        If any requested period falls outside `COVERED_FROM`..`COVERED_TO`. The
-        pinned calendar does not extend past the competition test window, and
-        guessing is worse than stopping.
+        If any requested period falls outside `COVERED_FROM`..`COVERED_TO`. UAE
+        event dates after the competition test window are tabular-calendar
+        projections inside pinned sighting windows, not official declarations.
     """
     idx = pd.PeriodIndex(periods, freq="M").unique().sort_values()
     if len(idx) == 0:
@@ -300,7 +306,7 @@ def monthly_features(periods) -> pd.DataFrame:
         raise ValueError(
             f"requested periods {idx.min()}..{idx.max()} fall outside the pinned "
             f"calendar {COVERED_FROM}..{COVERED_TO}. Extend EXPECTED_WINDOWS and "
-            f"COVERED_FROM/TO first, and re-run pipeline/tests/test_calendar_events.py."
+            "COVERED_FROM/TO first, and re-run pipeline/tests/test_calendar_events.py."
         )
 
     ndays = idx.days_in_month.to_numpy()
