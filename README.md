@@ -12,7 +12,7 @@ Start at [`docs/METHODS.md`](docs/METHODS.md).
 | Methods, results and decisions (start here) | [`docs/METHODS.md`](docs/METHODS.md) |
 | Hybrid layer: parametric chain + LightGBM (Phases 3–4) | `notebooks/hybrid_layer.py` |
 | Competition-pack loader | `pipeline/competition/` |
-| Interactive simulator | `app/simulator.py` (stub — see [Open work](#open-work)) |
+| Interactive simulator | `app/simulator.py` (Streamlit app) |
 
 The models run **entirely on the licensed competition pack**. An earlier public-data
 investigation (Phase 1) returned a negative result — air arrivals are not a usable
@@ -171,19 +171,9 @@ That trains 15 LightGBM models, so it is not instant.
 .venv/bin/streamlit run app/simulator.py
 ```
 
-The Streamlit front end is the interactive deliverable (success criterion 01).
-Five tabs: **Scenario** (six global levers, route edits, per-market seat mix, a
-seats→passengers→visitors→guest-nights waterfall), **By market & season**,
-**Which levers matter** (a-priori and empirical Sobol, computed on demand),
-**Validation** (T5/T4 replayed live with WMAPE), and **Assumptions & limits**.
-The sidebar's six sliders come from the engine's `LEVER_BOUNDS`; every change
-re-scores the fitted model and the headline numbers update.
+Run `.venv/bin/streamlit run app/simulator.py`. Tabs: Scenario (levers + route edits + waterfall), By market & season, Which levers matter, Validation, Assumptions & limits. Loads cached fitted model if present, else fits once (~1 min).
 
-The app loads `outputs/models/simulator_full.pkl` if it exists and otherwise fits
-once (~1 minute, cached thereafter); fitting is `st.cache_resource`-cached across
-reruns. `app/logic.py` is the pure, testable layer (no `streamlit` import),
-`app/copy.py` holds the prose, and `pipeline/tests/test_simulator_app.py` pins
-the logic headlessly.
+
 
 ## Things to know before reading the numbers
 
