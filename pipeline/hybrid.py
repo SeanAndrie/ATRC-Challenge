@@ -61,6 +61,21 @@ def _require_dtypes() -> tuple[pd.CategoricalDtype, pd.CategoricalDtype]:
     return _MKT_DTYPE, _MON_DTYPE
 
 
+def set_categorical_dtypes(panel) -> None:
+    """Restore the shared categorical encodings from an already-built panel.
+
+    ``build_panels()`` sets these as a side effect, but a simulator restored from
+    a pickle in a *fresh* process never runs it, so predictions would raise until
+    ``build_panels()`` ran. ``Simulator.load()`` calls this to make the persisted
+    path work across processes. The encoding is derived identically to
+    ``build_panels`` -- sorted market levels and months 1..12 -- so predictions
+    from a load match a re-fit exactly.
+    """
+    global _MKT_DTYPE, _MON_DTYPE
+    _MKT_DTYPE = pd.CategoricalDtype(sorted(panel["market"].unique()))
+    _MON_DTYPE = pd.CategoricalDtype(list(range(1, 13)))
+
+
 def build_panels():
     """Load the pack and build the analysable frames.
 

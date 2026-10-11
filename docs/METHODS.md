@@ -110,7 +110,7 @@ weight. The seven success criteria map to the work as follows:
 
 | # | Criterion | Where it is addressed |
 | --- | --- | --- |
-| 01 | A working simulator, not a static report | `notebooks/hybrid_layer.py` Part A (levers + charts), `app/simulator.py` (stub, [open work](#open-work-and-next-steps)) |
+| 01 | A working simulator, not a static report | `pipeline/simulator.py` + `app/simulator.py` (Streamlit UI) with scenario levers; notebook Part A remains the audit trail |
 | 02 | Transparent conversion chain, assumptions adjustable | [Phase 3](#phase-3--parametric-layer) |
 | 03 | Validation against history with an honest error metric | T3/T4/T5, WMAPE on holdout and test window |
 | 04 | Sensitivity analysis | T6 a-priori Sobol + empirically measured lever spreads (`pipeline/sensitivity.py`) |
@@ -928,10 +928,14 @@ column (the attr is lost by `groupby`/serialization; the column survives), and
 the UI must not present market levels as measured; the aggregate views are the
 defaults for a reason.
 
-The Streamlit front end (`app/simulator.py`) is deliberately left as a stub for
-a UI contributor; the model side is complete, deterministic
-(`deterministic=True`, fixed seeds, single thread) and fit-on-demand from the
-competition pack — predictions are identical to the notebook's.
+The Streamlit front end (`app/simulator.py`) is the interactive deliverable with
+five tabs (Scenario, By market & season, Which levers matter, Validation,
+Assumptions & limits), a decisions-first copy (`app/copy.py`), and a thin,
+headlessly-testable logic layer (`app/logic.py`). The model side is complete,
+deterministic (`deterministic=True`, fixed seeds, single thread) and
+fit-on-demand from the competition pack — predictions are identical to the
+notebook's. The app loads `outputs/models/simulator_full.pkl` if present,
+otherwise fits once (`st.cache_resource`) and saves it.
 
 ---
 
@@ -984,15 +988,13 @@ complete and guarded; see the Simulator package subsection under Reproducibility
    market. Attempting to infer the mapping from the pack alone is not
    identifiable: a 33×45 origin-to-nationality matrix on 1,405 rows has more
    parameters than data.
-2. **Build the interactive front end**, aggregate-only until (1) resolves. The
-   chain, the hybrid, and the scenario API are done: `pipeline/hybrid.py` is the
-   canonical model the notebook also delegates to, and `pipeline/simulator.py`
-   exposes `Scenario`/`Simulator` (six levers, route edits, fit-on-demand, a
-   `reproduce_competition_window()` pin replays) with
-   `test_simulator_package.py` guarding it. What does not exist is the
-   Streamlit/FastAPI skin over `app/simulator.py` that renders by month and
-   season. Its market breakdown and `seats_mult` lever must be withheld or
-   explicitly labelled supply-side-only until attribution is fixed.
+2. **The interactive front end is implemented.** `app/simulator.py` (Streamlit) with
+   tabs for Scenario, market/season, sensitivity, validation, and assumptions; the
+   model side (`pipeline/hybrid.py` + `pipeline/simulator.py`) is complete with
+   lazy per-window fit, save/load, and guards. The front end follows the guidance:
+   aggregate views remain the default, and the market breakdown and per-market
+   seat mix are explicit, clearly labelled `supply-side-only`. Periodically
+   revisit (1) as a data fix if residence data becomes available.
 3. **Measure capture for the 52 air-only origins.** OpenSky data is present in
    `data/raw/opensky/` but unconsumed; this would extend the chain beyond the 33
    matched markets. Re-pulling requires `tools/fetch_opensky.py` and spends

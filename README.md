@@ -165,6 +165,26 @@ To run the deliverable end to end without a browser:
 
 That trains 15 LightGBM models, so it is not instant.
 
+## The simulator app
+
+```
+.venv/bin/streamlit run app/simulator.py
+```
+
+The Streamlit front end is the interactive deliverable (success criterion 01).
+Five tabs: **Scenario** (six global levers, route edits, per-market seat mix, a
+seats→passengers→visitors→guest-nights waterfall), **By market & season**,
+**Which levers matter** (a-priori and empirical Sobol, computed on demand),
+**Validation** (T5/T4 replayed live with WMAPE), and **Assumptions & limits**.
+The sidebar's six sliders come from the engine's `LEVER_BOUNDS`; every change
+re-scores the fitted model and the headline numbers update.
+
+The app loads `outputs/models/simulator_full.pkl` if it exists and otherwise fits
+once (~1 minute, cached thereafter); fitting is `st.cache_resource`-cached across
+reruns. `app/logic.py` is the pure, testable layer (no `streamlit` import),
+`app/copy.py` holds the prose, and `pipeline/tests/test_simulator_app.py` pins
+the logic headlessly.
+
 ## Things to know before reading the numbers
 
 - **The competition test window has no `Guests` column.** Only New Arrivals can be
@@ -258,7 +278,7 @@ in sign, small. Source-market public holidays are still not covered; see
 
 | # | Criterion | Where |
 | --- | --- | --- |
-| 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` stub |
+| 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` (Streamlit UI) |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 a-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |

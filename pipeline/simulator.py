@@ -372,6 +372,10 @@ class Simulator:
         obj._boosters = payload["boosters"]
         obj._best_iter = payload["best_iter"]
         obj._data_ready = True
+        # Restore the hybrid module's categorical encodings from the loaded
+        # panel: build_panels() sets them, and a fresh process that only loads
+        # (never builds) would otherwise fail every prediction.
+        H.set_categorical_dtypes(obj.panel)
         # Backward compatibility: artifacts saved before the learned ALOS was
         # shipped do not carry alos_boosters. They are ephemeral gitignored
         # caches, so a missing model raises a clear refit error in _predict

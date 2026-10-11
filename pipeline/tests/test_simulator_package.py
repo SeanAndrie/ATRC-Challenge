@@ -202,7 +202,19 @@ def main():
         assert abs(
             loaded.reproduce_competition_window().attrs["wm_na"] - wm
         ) < 1e-9
-    print("save/load round-trip ok")
+
+        # Fresh-process regression: a cold start has build_panels() unrun and the
+        # hybrid dtype globals unset. load() must restore them from the panel, so
+        # a load-only process predicts like a re-fit (this failed before
+        # hybrid.set_categorical_dtypes existed).
+        H._MKT_DTYPE = None
+        H._MON_DTYPE = None
+        cold = Simulator.load(art)
+        assert np.allclose(
+            cold.monthly(Scenario(seats_mult=1.2)).GuestNightsHat,
+            a.GuestNightsHat,
+        )
+    print("save/load round-trip ok (incl. fresh-process load)")
 
     print(f"\nALL SIMULATOR-PACKAGE PINS PASSED ({time.time()-t0:.0f}s)")
 
