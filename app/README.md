@@ -60,8 +60,17 @@ non-empty source wins:
 3. environment variables;
 4. a repo-root `.env`.
 
-Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY` and, optionally,
-`OPENROUTER_MODEL` (default `openai/gpt-4o-mini`; any tool-capable model works).
+For local use, create a `.env` file at the **repository root** (next to
+`README.md`, not inside `app/`; it is gitignored):
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+OPENROUTER_MODEL=openai/gpt-4o-mini   # optional; any tool-capable OpenRouter model
+```
+
+The same template is at the repository root as `.env.example`, so
+`cp .env.example .env` from the repository root also works. Without a key, the
+chat page explains how to add one, and every other page works normally.
 
 | Question in the brief | Tool |
 | --- | --- |
