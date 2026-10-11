@@ -20,6 +20,13 @@ default scenarios are scored with, and ``fit()`` trains **only that window**:
 * ``"competition"`` -- the T5 protocol (iterations on the leave-tail holdout).
   ``reproduce_competition_window`` trains it on demand and replays the pinned
   numbers live.
+  ``reproduce_holdout`` replays the T4 protocol and scores guest-nights with the
+  learned ALOS (~20.8%), the number the docs quote for the guest-nights leg.
+
+Guest-nights in the hybrid path use the **learned ALOS** (a 5-seed regression
+on the same leak-free features as the arrival model), fitted once on the
+training panel; the parametric ``chain()`` keeps the fixed per-market
+``ALOS[m]`` ratio. The two paths therefore mirror the notebook's ML-4 head-to-head.
 
 A fitted simulator can be cached with ``save()`` / ``load()`` (pickled to
 ``outputs/models/``, gitignored). No artifact is required -- the fit-on-demand
@@ -130,6 +137,7 @@ class Simulator:
         self.test_panel = None
         self.params = None
         self._base_routes = None
+        self._alos_boosters = None
         self._boosters = {"full": None, "competition": None}
         self._best_iter = {"full": None, "competition": None}
 
@@ -149,6 +157,11 @@ class Simulator:
         self.panel = panel
         self.test_panel = test_panel
         self.params = H.fit_params(panel)
+        # Learned ALOS: a single model on the whole panel, shared by both
+        # windows. A per-window copy would be identical (both windows train the
+        # final ensembles on self.panel), so fitting once is deliberate, not
+        # laziness.
+        self._alos_boosters = H.fit_alos_model(panel)
         self._base_routes = self._build_base_routes()
         self._data_ready = True
         return self
@@ -191,8 +204,13 @@ class Simulator:
         scaled, _raw = self._scenario_supply(scenario)
         scaled = self._slice_markets(scaled, markets)
 
+        if self._alos_boosters is None:
+            raise RuntimeError(
+                "learned ALOS model missing; re-fit the simulator (Simulator.fit()) "
+                "or re-save the artifact (Simulator.save())"
+            )
         pred = H.predict_hybrid(self._boosters[self.window], scaled)
-        alos = scaled["market"].map(self.params["alos"]).to_numpy(dtype=float)
+        alos = H.predict_alos(self._alos_boosters, scaled)
         new_arr = pred * scenario.capture_mult * scenario.season_mult
         out = scaled[
             ["ym_str", "ym", "market", "month", "routes", "airlines",
@@ -286,6 +304,33 @@ class Simulator:
         out.attrs["best_iter"] = self._best_iter["competition"]
         return out
 
+    def reproduce_holdout(self):
+        """Replay the T4 protocol and score guest-nights with the learned ALOS.
+
+        Fits the leave-tail holdout (train 2022-01..2025-01, test
+        2025-02..2025-07) exactly as the notebook's ML-2/ML-4 do: iterations on
+        an internal six-month tail, 5-seed New Arrivals ensemble, then learned
+        ALOS on the same fit window. Returns the holdout predictions with
+        ``wm_guest`` (WMAPE of guest-nights) and ``best_iter`` on the attrs.
+        The notebook ML-4 and the docs pin this near 20.8%; the test suite
+        asserts it within tolerance.
+        """
+        self._ensure_data()
+        fit_panel = self.panel[self.panel["ym"] <= "2025-01"]
+        ho = self.panel[self.panel["ym"] > "2025-01"]
+        core = fit_panel[fit_panel["ym"] <= "2024-07"]
+        val = fit_panel[fit_panel["ym"] > "2024-07"]
+        best = H.fit_poisson(core, val)
+        pred_ho, _pl = H.predict_poisson(fit_panel, ho, best)
+        alos_hat = H.predict_alos(H.fit_alos_model(fit_panel), ho)
+        out = ho[["ym_str", "ym", "market", "month", "NewArr", "Guests"]].copy()
+        out["NewArrivalHat"] = pred_ho
+        out["ALOS_hat"] = alos_hat
+        out["GuestNightsHat"] = pred_ho * alos_hat
+        out.attrs["wm_guest"] = H.wmape(ho["Guests"], out["GuestNightsHat"])
+        out.attrs["best_iter"] = best
+        return out
+
     # -- persistence ---------------------------------------------------------
     def save(self, path: str | Path | None = None) -> Path:
         """Pickle the fitted state (params + supply cache + boosters).
@@ -303,6 +348,7 @@ class Simulator:
             "panel": self.panel,
             "test_panel": self.test_panel,
             "base_routes": self._base_routes,
+            "alos_boosters": self._alos_boosters,
             "boosters": self._boosters,
             "best_iter": self._best_iter,
         }
@@ -326,6 +372,11 @@ class Simulator:
         obj._boosters = payload["boosters"]
         obj._best_iter = payload["best_iter"]
         obj._data_ready = True
+        # Backward compatibility: artifacts saved before the learned ALOS was
+        # shipped do not carry alos_boosters. They are ephemeral gitignored
+        # caches, so a missing model raises a clear refit error in _predict
+        # rather than silently degrading to the chain ratio.
+        obj._alos_boosters = payload.get("alos_boosters")
         return obj
 
     # -- supply assembly -----------------------------------------------------

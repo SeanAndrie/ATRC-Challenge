@@ -386,26 +386,51 @@ def train_model(df, n_rounds, seed=0):
     return lgb.train(p, _ds(df, X, off), num_boost_round=n_rounds)
 
 
-def fit_alos(train, test):
-    """Guest-nights are New Arrivals x length of stay. This learns log-ALOS from
-    the same features; the alternative is the chain's ALOS[m]."""
+# Fixed round count for the learned-ALOS ensemble. Unlike the New Arrivals
+# model, ALOS has no early-stopping pass: 300 rounds on the panel is the a-priori
+# choice, pinned out of sample by ML-4 (T4 guest-nights ~20.8%) and by
+# Simulator.reproduce_holdout().
+ALOS_ROUNDS = 300
 
+
+def fit_alos_model(df):
+    """Train the 5-seed log-ALOS ensemble on a full frame.
+
+    Guest-nights are New Arrivals x length of stay; this learns log-ALOS from
+    the same leak-free features as the arrival model (the alternative is the
+    chain's fixed ``ALOS[m]``). Rows with no arrivals or no guests are dropped,
+    as in the notebook's ML-4. Returns boosters for ``predict_alos``.
+    """
     lgb = _get_lgb()
-    tr = train[(train["NewArr"] > 0) & (train["Guests"] > 0)]
+    tr = df[(df["NewArr"] > 0) & (df["Guests"] > 0)]
 
     Xtr = featurize(tr)
-    Xte = featurize(test)
     ytr = np.log(tr["Guests"].to_numpy(dtype=float) / tr["NewArr"].to_numpy(dtype=float))
 
-    preds = []
+    out = []
     for s in seeds:
         p = dict(base)
         p["objective"] = "regression"
         p["seed"] = s
-        b = lgb.train(p, lgb.Dataset(Xtr, label=ytr, categorical_feature=cats), num_boost_round=300)
-        preds.append(np.exp(b.predict(Xte)))
+        b = lgb.train(
+            p, lgb.Dataset(Xtr, label=ytr, categorical_feature=cats),
+            num_boost_round=ALOS_ROUNDS,
+        )
+        out.append(b)
+    return out
 
-    return np.mean(preds, axis=0)
+
+def predict_alos(boosters, frame):
+    """Per-row learned ALOS, the 5-seed mean of ``exp(raw score)``."""
+    X = featurize(frame)
+    return np.mean([np.exp(b.predict(X)) for b in boosters], axis=0)
+
+
+def fit_alos(train, test):
+    """One-shot fit-and-predict (the notebook's ML-4 path). Identical numbers to
+    ``predict_alos(fit_alos_model(train), test)``; kept so the notebook binds the
+    same function as before."""
+    return predict_alos(fit_alos_model(train), test)
 
 
 def fit_hybrid(df, best_iter, events=True):

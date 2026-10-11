@@ -121,7 +121,10 @@ sim.save()                                    # optional cache -> outputs/models
 
 Supply levers (`seats_mult`, `lf_mult`, `p2p_mult`) rewrite the supply frame, so
 the hybrid's features and Poisson exposure respond non-linearly;
-`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. Fitting is lazy
+`capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. The hybrid
+path's guest-nights use the **learned ALOS** (a 5-seed regression on the model's
+features), while `chain()` keeps the fixed per-market `ALOS[m]` so the
+parametric layer stays interpretable. Fitting is lazy
 and per-window (`full` for scenarios, `competition` for the T5 replay); a fitted
 simulator can be pickled with `save()`/`load()` to spare the refit. Because of
 the market-join defect in §4.5, `market()` rows carry
@@ -193,7 +196,9 @@ submission itself is Phase 2–4.
 On the 2022-2026 pack the parametric demand chain predicts New Arrivals at 28.4%
 WMAPE on a holdout (36.0% seasonal-naive), and the hybrid LightGBM layer cuts
 that to **21.3%** — **20.6%** on the actual 2025-08 to 2026-02 test window
-(aggregate bias −0.1% vs +1.1%). Guest-nights reach 20.8% with a learned ALOS.
+(aggregate bias −0.1% vs +1.1%). Guest-nights reach 20.8% with a learned ALOS
+(the value the simulator's hybrid path ships — see
+[`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility)).
 See [`docs/METHODS.md` §3–4](docs/METHODS.md#phase-3--parametric-layer).
 
 ### Read this before quoting any market-level number

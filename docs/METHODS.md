@@ -134,6 +134,7 @@ weight. The seven success criteria map to the work as follows:
 | 2026-10-06 | Origin mix validated against SCAD's official embarkation table; region-level gap pinned | `pipeline/aviation/scad_region_arrivals.py`, `test_market_origin_validation.py` |
 | 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py`, `test_simulator_package.py` |
 | 2026-10-10 | Simulator package hardened: lazy per-window fit, pickle persistence, immutable validated market multipliers, lever guards | `pipeline/simulator.py`, `pipeline/hybrid.py`, `pipeline/tests/test_simulator_package.py` |
+| 2026-10-11 | Learned ALOS shipped in the simulator's hybrid path; T4 guest-nights replayed live | `pipeline/simulator.py`, `pipeline/hybrid.py`, `pipeline/tests/test_simulator_package.py` |
 
 The repository has a single commit (`Initial commit: ATRC Abu Dhabi
 flight-to-hotel analysis`); the working tree carries the Phase 2–4 work. Raw data
@@ -388,7 +389,7 @@ replaces **only** the capture step:
 ```
 seats → PAX → P2P             [parametric chain, exact]
 P2P  → New Arrivals           [LightGBM Poisson, offset log(P2P)]
-New Arrivals → guest-nights    [chain ALOS[m] or a learned ALOS]
+New Arrivals → guest-nights    [learned ALOS by default; chain ALOS[m] is the parametric view]
 ```
 
 The Poisson offset makes the model learn an intensity per terminating passenger —
@@ -433,7 +434,7 @@ iterations: **1466** (T4) and **1978** (T5), with the event calendar of §4.3;
 | T5 New Arrivals WMAPE (231 market-months) | 32.8% | **20.6%** (seeds 20.3–20.9) |
 | T5 aggregate bias | +1.1% | **−0.1%** |
 | T4 guest-nights WMAPE, chain ALOS | 25.6% | 23.3% |
-| T4 guest-nights WMAPE, learned ALOS | — | **20.8%** |
+| T4 guest-nights WMAPE, learned ALOS | — | **20.8%** (shipped in the simulator, `reproduce_holdout()`) |
 | seasonal-naive New Arrivals baseline, T4 | 36.0% | — |
 
 ### 4.3 The event calendar, and what it is worth
@@ -682,6 +683,7 @@ Script column above names the generator.
 | 2026-10-06 | Origin mix validated against SCAD's official region-of-embarkation table (KTS 2025 t.6): pack files last-flight, not true embarkation (GCC +5–7 pp every year); no coarser region grouping rescues market-level attribution | [§4.5](#45-the-market-join-is-structurally-wrong-and-what-survives) |
 | 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model; packaging pinned by a ninth diagnostic | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 | 2026-10-10 | Simulator package hardened after a critical audit: lazy per-window fit (fit trains only the selected window), save()/load() pickle persistence, market_seats_mult made an immutable tuple validated against the 33 markets, zero-supply/unknown-market/out-of-horizon guards, NaN-safe featurize, data_status column; packaging diagnostic halved to ~75s | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
+| 2026-10-11 | Learned ALOS wired into the simulator's hybrid path: `monthly()`/`market()` guest-nights now match the documented 20.8% (T4), replayed live by `reproduce_holdout()`; `chain()` keeps the fixed per-market `ALOS[m]` so the parametric layer stays interpretable; ALOS trained once, persisted, backward-safe on load | [§4.2](#42-evaluation) and [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 
 ---
 
@@ -821,8 +823,8 @@ notebook's Part A/B cells now delegate to it (thin cells that bind the same
 names), so the notebook's pinned Part C numbers *are* the packaged model's
 numbers, and `test_simulator_package.py` re-fits the package and pins it again
 (for the T5 competition window, WMAPE within `20.8 ± 2.0` with aggregate bias
-near `-0.1%`). The test takes ~75s: it fits the `full` window once, then the
-`competition` window on demand.
+near `-0.1%`). The test takes ~90s: it fits the `full` window once, then the
+`competition` window on demand, then replays the T4 holdout for guest-nights.
 
 ```
 from pipeline.simulator import Simulator, Scenario, RouteEdit
@@ -838,6 +840,15 @@ default scenarios are scored with, and `fit()` trains only that window
 `save()`/`load()` pickle the fitted state to `outputs/models/` (gitignored) to
 spare the ~1-minute refit on a Streamlit restart; no artifact is required, and a
 fresh fit yields identical predictions.
+
+The hybrid path's guest-nights use the **learned ALOS** — a 5-seed LightGBM
+regression on the same leak-free features as the arrival model, fitted once on
+the training panel — so `monthly()`/`market()` emit the guest-nights accuracy
+this document quotes (§4.2, `20.8%` on T4), replayed live by
+`reproduce_holdout()`. The parametric `chain()` keeps the fixed per-market
+`ALOS[m]`, so the interpretable layer stays interpretable and the two paths
+mirror the notebook's ML-4 head-to-head. `reproduce_competition_window()` replays
+the T5 New-Arrivals protocol as before.
 
 Lever semantics are documented in the `simulator.py` docstring: the three
 supply levers re-enter the model's features *and* its Poisson exposure offset

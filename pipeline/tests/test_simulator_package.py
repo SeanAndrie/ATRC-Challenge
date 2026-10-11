@@ -16,10 +16,11 @@ from pipeline.simulator import RouteEdit, Scenario, Simulator  # noqa: E402
 
 # This is the ninth diagnostic. Unlike the other eight it writes NO report:
 # it exists so the packaging of the simulator cannot silently drift from the
-# notebook model without a test failing. Runtime is dominated by the two
-# LightGBM ensembles it builds (~2 minutes); every assertion mirrors a pin the
-# notebook Part C already commits to, restated here against the packaged code
-# the Streamlit contributor will actually call.
+# notebook model without a test failing. Runtime is dominated by the LightGBM
+# ensembles it builds (the full and competition windows, the learned-ALOS model,
+# and the T4 holdout replay); every assertion mirrors a pin the notebook Part C
+# already commits to, restated here against the packaged code the Streamlit
+# contributor will actually call.
 
 
 def main():
@@ -32,6 +33,7 @@ def main():
     sim.fit()
     assert sim._boosters["full"] is not None
     assert sim._boosters["competition"] is None, "fit() must train only its window"
+    assert sim._alos_boosters is not None, "fit() must train the learned ALOS once"
     print(f"lazy per-window fit ok ({time.time()-t0:.1f}s for full only)")
 
     # featurize now has its categorical encodings (set by the build), and the
@@ -46,6 +48,26 @@ def main():
     p2 = H.predict_hybrid(H.fit_hybrid(sub, 60), sub)
     assert np.allclose(p1, p2), "LightGBM fit must be deterministic"
     print("determinism (two small fits identical) ok")
+
+    # Guest-nights in the hybrid path use the learned ALOS: GuestNightsHat must
+    # be NewArrivalHat * predict_alos on the identical scaled frame. This is the
+    # packaged equivalent of the notebook's ML-4 composition.
+    mf = sim._predict(Scenario())
+    scaled0, _ = sim._scenario_supply(Scenario())
+    alos_hat = H.predict_alos(sim._alos_boosters, scaled0)
+    assert mf["NewArrivalHat"].shape == alos_hat.shape
+    assert np.allclose(mf["GuestNightsHat"], mf["NewArrivalHat"] * alos_hat)
+    print("hybrid guest-nights use the learned ALOS ok")
+
+    # The pinned T4 guest-nights number (~20.8% with a learned ALOS), replayed
+    # by the simulator the way reproduce_competition_window replays T5.
+    rep = sim.reproduce_holdout()
+    wm_guest = rep.attrs["wm_guest"]
+    print(
+        f"T4 holdout guest-nights WMAPE (learned ALOS)={wm_guest:.2f}% "
+        f"best_iter={rep.attrs['best_iter']} ({time.time()-t0:.0f}s elapsed)"
+    )
+    assert abs(wm_guest - 20.8) < 2.0, f"T4 guest-nights {wm_guest:.2f}% outside 20.8 +- 2.0"
 
     # The pinned T5 protocol: trains the competition window on demand, refit on
     # the full panel, scored on the competition test window. Notebook Part C
@@ -172,6 +194,11 @@ def main():
         a = sim.monthly(Scenario(seats_mult=1.2))
         b = loaded.monthly(Scenario(seats_mult=1.2))
         assert np.allclose(a.GuestNightsHat, b.GuestNightsHat)
+        assert loaded._alos_boosters is not None
+        assert np.allclose(
+            H.predict_alos(loaded._alos_boosters, scaled0),
+            H.predict_alos(sim._alos_boosters, scaled0),
+        )
         assert abs(
             loaded.reproduce_competition_window().attrs["wm_na"] - wm
         ) < 1e-9
