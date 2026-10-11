@@ -35,8 +35,9 @@ pipeline/hotel_supply.py
 pipeline/calendar_events.py   UAE event calendar (Ramadan, Eid, National Day, NYE)
 pipeline/hybrid.py            canonical chain + LightGBM layer (notebook and simulator share it)
 pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
-pipeline/tests/    nine standalone diagnostics
-notebooks/         three marimo notebooks
+pipeline/sensitivity.py       empirically measured lever spreads + Sobol (sensitivity view 2)
+pipeline/tests/    ten standalone diagnostics
+notebooks/         four marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
 outputs/           generated reports + scratch (gitignored)
@@ -91,6 +92,7 @@ in particular is quota-limited and may not be repeatable.
 .venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets
 .venv/bin/python pipeline/tests/test_market_origin_validation.py   # pack region mix vs SCAD embarkation mix
 .venv/bin/python pipeline/tests/test_simulator_package.py   # packaging gate; writes no report
+.venv/bin/python pipeline/tests/test_sensitivity.py         # empirical lever spreads; writes no report
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 ```
 
@@ -103,7 +105,9 @@ The diagnostics write into `outputs/`. Each report is written fresh by its
 script on every run and is gitignored; the commands above name the generators.
 `test_simulator_package.py` is the ninth diagnostic but writes no report: it
 re-fits the packaged model and pins it to the notebook's numbers, so the
-simulator cannot silently drift from the deliverable.
+simulator cannot silently drift from the deliverable. `test_sensitivity.py` is
+the tenth and also writes no report: it pins the empirical-sensitivity module on
+a synthetic panel (METHODS §3.4).
 
 ## Streamlit simulator
 
@@ -137,12 +141,16 @@ past the event calendar's 2026-02 horizon. See
 
 ```
 .venv/bin/python -m marimo edit notebooks/hybrid_layer.py    # the deliverable
+.venv/bin/python -m marimo edit notebooks/sensitivity_empirical.py # §3.4 empirical view
 .venv/bin/python -m marimo edit notebooks/linkage_study.py   # Phase 1 evidence
 .venv/bin/python -m marimo edit notebooks/flight_analysis.py # Phase 1 evidence
 ```
 
 `hybrid_layer.py` is the submission: Part A is the parametric chain, Part B the
-hybrid LightGBM layer, both scored on one panel in one run. `linkage_study.py` is
+hybrid LightGBM layer, both scored on one panel in one run.
+`sensitivity_empirical.py` is the §3.4 companion that measures each lever's actual
+month-to-month spread and reruns the Sobol on those bounds.
+`linkage_study.py` is
 the main public-data analysis and `flight_analysis.py` is a read of the OpenSky
 ADS-B extract; both are Phase 1 background kept as evidence, and neither is part
 of the deliverable. The OpenSky puller is a marimo notebook too, but it lives in
@@ -253,7 +261,7 @@ in sign, small. Source-market public holidays are still not covered; see
 | 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` stub |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
-| 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
+| 04 | Sensitivity analysis | T6 a-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |
 | 05 | Granularity by market and season | 33-market panel, monthly season index — **attribution unvalidated, see the warning above** |
 | 06 | Decision relevance | capture spread is the allocation lever; **market levers misfiled, see the warning above** |
 | 07 | Reproducibility | pinned assertions T7/ML-6; [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
