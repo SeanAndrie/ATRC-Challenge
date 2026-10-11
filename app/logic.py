@@ -54,7 +54,7 @@ LEVER_HELP = {
         "conversion probability."
     ),
     "alos_mult": "Average length of stay; scales guest nights only.",
-    "season_mult": "Seasonal shape; scales New Arrivals and guest nights.",
+    "season_mult": "Seasonal shape; Scales New Arrivals and Guest Nights.",
 }
 
 METRIC_LABELS = {
@@ -220,7 +220,7 @@ def monthly_trend(
     fig.add_scatter(
         x=base_monthly["ym_str"],
         y=base_monthly[metric],
-        name="Baseline (2025 schedule)",
+        name="Baseline (observed schedule)",
         mode="lines",
         line=dict(color="#8a8f98", dash="dot"),
     )

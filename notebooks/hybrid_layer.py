@@ -804,17 +804,19 @@ def stepA_6_t6(mo):
 def _(np, panel, params, pd):
     # T6 global sensitivity (SALib Sobol) over the six floating levers, plus
     # one-at-a-time elasticities for the signed direction.
-    #
+
     # Honest caveat, in plain words: the bounds below are a-priori choices, not
     # measured spreads. Because the chain is a pure product, the ST ranking mostly
     # mirrors the widths we chose. An empirical-spread version is a planned,
     # separately-reported follow-up experiment.
+
     cap_arr = panel["market"].map(params["capture"]).to_numpy(dtype=float)
     alos_arr = panel["market"].map(params["alos"]).to_numpy(dtype=float)
     season_arr = panel["month"].map(params["season"]).to_numpy(dtype=float)
     seats0 = panel["Total_Seats"].to_numpy(dtype=float)
     lf0 = (panel["Total_PAX"] / panel["Total_Seats"]).to_numpy(dtype=float)
     p2p_share0 = (panel["Total_P2P"] / panel["Total_PAX"]).to_numpy(dtype=float)
+
     def total_nights(x):
         seats = seats0 * x[0]
         pax = seats * lf0 * x[1]
@@ -853,6 +855,7 @@ def _(np, panel, params, pd):
             [0.9, 1.1],
         ],
     }
+
     sample = sobol_sample.sample(problem, 256, calc_second_order=False)
     y = np.array([total_nights(row) for row in sample])
     si = sobol_analyze.analyze(problem, y, calc_second_order=False, print_to_console=False)
@@ -865,7 +868,6 @@ def _(np, panel, params, pd):
             "ST": si["ST"],
         }
     ).sort_values("ST", ascending=False)
-
     return (sensitivity,)
 
 

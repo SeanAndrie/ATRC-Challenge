@@ -53,6 +53,9 @@ both layers re-score and the headline numbers update.
 - **12 hotel-only markets** (Australia, Brazil, Czechia, Denmark, Finland,
   Mexico, Morocco, Norway, Pakistan, Romania, South Africa, Sweden) have no
   flight supply and are carried as a separately reported residual.
+- **New source countries are out of scope.** The route editor only offers the 33
+  markets already serving Abu Dhabi; the model cannot encode a genuinely new
+  origin country.
 - **Source-market public holidays are out of scope.** The UAE-wide event
   calendar is baked into the features; the ``season`` dial is the seasonality
   control.
@@ -90,7 +93,7 @@ passengers, which is impossible. Connecting passengers are filed under the hub
 ### Validation with an honest error metric
 
 - **Competition window (2025-08 → 2026-02), New Arrivals:** 20.6% WMAPE,
-  aggregate bias −0.1% (seasonal-naive 32.8%).
+  aggregate bias −0.1% (parametric chain 32.8%).
 - **Leave-tail holdout, guest nights:** ~20.8% WMAPE with a learned ALOS.
 - All figures are replayed live in the **Validation** tab and pinned by the
   test suite, not asserted.

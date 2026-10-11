@@ -54,7 +54,7 @@ def get_simulator(window: str = "full") -> Simulator:
 def _market_mix_editor() -> tuple:
     """Advanced per-market seat multipliers; returns the non-1.0 pairs."""
     sim = _SIM
-    markets = sorted(sim.fa["market"].unique())
+    markets = sorted(sim.panel["market"].unique())
     base = pd.DataFrame({"market": markets, "seat_multiplier": 1.0})
     with st.sidebar.expander("Advanced: per-market seat mix"):
         st.caption(
@@ -69,7 +69,7 @@ def _market_mix_editor() -> tuple:
             disabled=["market"],
             column_config={
                 "seat_multiplier": st.column_config.NumberColumn(
-                    "× seats", min_value=0.0, max_value=3.0, step=0.05, format="%.2f"
+                    "× seats", min_value=0.05, max_value=3.0, step=0.05, format="%.2f"
                 )
             },
         )
@@ -89,7 +89,11 @@ def _route_editor() -> tuple:
     sim = _SIM
     routes = st.session_state.setdefault("routes", [])
     with st.sidebar.expander("Add a new route / extra frequency"):
-        markets = sorted(sim.fa["market"].unique())
+        markets = sorted(sim.panel["market"].unique())
+        st.caption(
+            "Only markets already flying to AUH can be edited — the model cannot "
+            "add a brand-new source country."
+        )
         market = st.selectbox("Market (departure country)", markets, key="route_market")
         city = st.text_input("Departure city", value="", key="route_city")
         airline = st.text_input("Airline", value="", key="route_airline")
@@ -120,15 +124,39 @@ def _route_editor() -> tuple:
     return tuple(routes)
 
 
-def _headline_block(scen_frame: pd.DataFrame, base_frame: pd.DataFrame) -> None:
+def _headline_block(
+    scen_frame: pd.DataFrame,
+    base_frame: pd.DataFrame,
+    scen_chain: pd.DataFrame | None = None,
+    base_chain: pd.DataFrame | None = None,
+) -> None:
     table = L.headline(scen_frame, base_frame)
-    cols = st.columns(3)
+    chain_row = None
+    if scen_chain is not None and base_chain is not None:
+        chain_base = float(base_chain["GuestNightsHat"].sum())
+        chain_scen = float(scen_chain["GuestNightsHat"].sum())
+        chain_pct = (
+            100.0 * (chain_scen / chain_base - 1.0) if chain_base else float("nan")
+        )
+        chain_row = (chain_scen, chain_scen - chain_base, chain_pct)
+
+    cols = st.columns(len(table) + (1 if chain_row is not None else 0))
     for col, row in zip(cols, table.itertuples()):
         col.metric(
             row.metric,
             f"{row.scenario:,.0f}",
             f"{row.change:+,.0f} ({row.change_pct:+.1f}%)",
+            delta_color="off" if row.change_pct == 0 else "normal",
         )
+    if chain_row is not None:
+        chain_scen, chain_change, chain_pct = chain_row
+        cols[-1].metric(
+            "Guest nights — parametric chain",
+            f"{chain_scen:,.0f}",
+            f"{chain_change:+,.0f} ({chain_pct:+.1f}%)",
+            delta_color="off" if chain_pct == 0 else "normal",
+        )
+    st.caption("Totals cover Jan 2022 to Feb 2026. Read the percent change.")
     with st.expander("Totals table"):
         st.dataframe(
             table.style.format(
@@ -150,13 +178,19 @@ def _scenario_tab(scen_frame, base_frame, scen_chain) -> None:
         format_func=lambda k: L.METRIC_LABELS[k],
         key="scen_metric",
     )
-    _headline_block(scen_frame, base_frame)
+    _headline_block(
+        scen_frame, base_frame, scen_chain, st.session_state.get("baseline_chain")
+    )
+    st.caption(
+        "Scenarios replay the 2022-01 → 2026-02 window; the model cannot project "
+        "beyond Feb 2026."
+    )
 
     scen_monthly = L.monthly_from(scen_frame)
     base_monthly = L.monthly_from(base_frame)
     chain_monthly = L.monthly_from(scen_chain) if scen_chain is not None else None
     show_chain = st.checkbox(
-        "Show the parametric chain alongside the hybrid", value=False
+        "Show the parametric chain alongside the hybrid", value=True
     )
     st.plotly_chart(
         L.monthly_trend(
@@ -267,8 +301,10 @@ def _sensitivity_tab() -> None:
 def _validation_tab() -> None:
     st.subheader("Validation with an honest error metric")
     st.caption(
-        "Replayed from the fitted model, not asserted. The first run trains the "
-        "competition window (~1 minute)."
+        "The four error/bias figures are replayed live from the fitted model, not "
+        "asserted. The two baselines (parametric chain T5 32.8%, seasonal-naive "
+        "T4 36.0%) are pinned by the notebook's test suite, not re-computed here. "
+        "The first run trains the competition window (~1 minute)."
     )
     if st.button("Run validation (T5 competition window + T4 holdout)"):
         with st.spinner("Training the competition window and scoring…"):
@@ -282,7 +318,8 @@ def _validation_tab() -> None:
         c1.metric("New Arrivals WMAPE (T5)", f"{t5.attrs['wm_na']:.1f}%")
         c1.metric("Aggregate bias (T5)", f"{t5.attrs['bias_pct']:+.1f}%")
         c2.metric("Guest-nights WMAPE (T4 holdout)", f"{t4.attrs['wm_guest']:.1f}%")
-        c2.metric("Seasonal-naive baseline (T5)", "32.8%")
+        c2.metric("Parametric chain (T5)", "32.8%")
+        c2.metric("Seasonal-naive baseline (T4)", "36.0%")
         st.plotly_chart(
             L.validation_scatter(t5, "NewArr", "NewArrivalHat"),
             width="stretch",
@@ -305,10 +342,11 @@ with st.spinner("Loading the fitted simulator (trains once, then cached)…"):
 
 if "baseline" not in st.session_state:
     st.session_state["baseline"] = _SIM.market(Scenario())
+    st.session_state["baseline_chain"] = _SIM.chain(Scenario())
 
 with st.sidebar:
     st.header("Scenario levers")
-    st.caption("1.0 = the observed 2025 schedule. Move any of them.")
+    st.caption("1.0 = the observed schedule (2022-01 to 2026-02). Move any of them.")
     levers = {}
     for key, (lo, hi, step) in L.lever_sliders().items():
         levers[key] = st.slider(
@@ -327,8 +365,12 @@ scenario = L.build_scenario(levers, market_mults=market_mults, routes=routes)
 st.session_state["scenario"] = scenario
 
 with st.spinner("Scoring the scenario…"):
-    scen_frame = _SIM.market(scenario)
-    scen_chain = _SIM.chain(scenario)
+    try:
+        scen_frame = _SIM.market(scenario)
+        scen_chain = _SIM.chain(scenario)
+    except ValueError as exc:
+        st.error(f"This scenario is outside what the model supports. {exc}")
+        st.stop()
 
 base_frame = st.session_state["baseline"]
 
