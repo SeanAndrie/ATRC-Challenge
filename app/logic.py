@@ -243,7 +243,7 @@ def monthly_trend(
         title=f"{METRIC_LABELS[metric]} by month",
         xaxis_title="Month",
         yaxis_title=METRIC_LABELS[metric],
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
         margin=dict(l=10, r=10, t=60, b=10),
     )
     return fig
@@ -276,7 +276,7 @@ def seasonal_bars(
         title=f"{METRIC_LABELS[metric]} by calendar month",
         xaxis_title="Month",
         yaxis_title=METRIC_LABELS[metric],
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
         margin=dict(l=10, r=10, t=60, b=10),
     )
     return fig
@@ -310,7 +310,7 @@ def market_pareto(
         title=f"Top {top_n} source markets by {METRIC_LABELS[metric].lower()}",
         xaxis_title="Source market",
         yaxis_title=METRIC_LABELS[metric],
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
         margin=dict(l=10, r=10, t=60, b=10),
     )
     return fig
@@ -357,7 +357,7 @@ def validation_scatter(rep: pd.DataFrame, actual: str, hat: str) -> "object":
         title="Actual vs predicted",
         xaxis_title=actual,
         yaxis_title=hat,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5),
         margin=dict(l=10, r=10, t=60, b=10),
     )
     return fig
