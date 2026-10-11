@@ -12,7 +12,7 @@ Start at [`docs/METHODS.md`](docs/METHODS.md).
 | Methods, results and decisions (start here) | [`docs/METHODS.md`](docs/METHODS.md) |
 | Hybrid layer: parametric chain + LightGBM (Phases 3–4) | `notebooks/hybrid_layer.py` |
 | Competition-pack loader | `pipeline/competition/` |
-| Interactive simulator | [`app/simulator.py`](app/simulator.py) — built; see [app/README.md](app/README.md) |
+| Interactive simulator + chatbot | [`app/streamlit_app.py`](app/streamlit_app.py) — see [app/README.md](app/README.md) |
 
 The models run **entirely on the licensed competition pack**. An earlier public-data
 investigation (Phase 1) returned a negative result — air arrivals are not a usable
@@ -38,6 +38,7 @@ pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
 notebooks/         three marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
+app/               Streamlit app: pages, chatbot agent, model build script
 outputs/           model cache + saved scenarios (gitignored)
 ```
 
@@ -81,7 +82,7 @@ in particular is quota-limited and may not be repeatable.
 
 ```
 .venv/bin/python pipeline/dct/dct_validate.py        # data reconciliation
-.venv/bin/streamlit run app/simulator.py             # the interactive prototype
+.venv/bin/streamlit run app/streamlit_app.py         # the interactive prototype
 .venv/bin/python -m marimo export html --no-include-code notebooks/hybrid_layer.py -o out.html
 ```
 
@@ -97,21 +98,26 @@ figure are recorded in [`docs/METHODS.md`](docs/METHODS.md).
 ## Streamlit simulator
 
 The parametric chain and the hybrid layer are packaged as an importable API, and
-`app/simulator.py` is the built front end. Run it from the repository root:
+`app/` is the Streamlit front end. Build the model artifacts once (needs the
+competition pack), then run the app from the repository root:
 
 ```
-.venv/bin/streamlit run app/simulator.py
+.venv/bin/python -m app.build_model          # writes outputs/models/simulator_full.pkl + validation.parquet
+.venv/bin/streamlit run app/streamlit_app.py
 ```
 
-It loads the fitted cache from `outputs/models/` when present (otherwise it fits
-the pack once, ~1–2 minutes, and saves the cache), and exposes the brief's five
-questions as scenario rows: new routes, frequency changes, seat/aircraft
-changes, load-factor shifts and seasonal market-mix shifts. A second page,
-**`/chatbot`**, is an OpenRouter-backed agent that answers open-ended questions
-by calling tools that score the real model (`.env.example` holds the key and
-model config). See
-[`app/README.md`](app/README.md) for the question-to-lever mapping, the
-chatbot setup and the read-before-trusting notes.
+The app opens on an overview. Then there is one page for each of the brief's three
+headline questions:
+- a new twice-weekly route;
+- a winter flight cut, with an indicative occupancy change;
+- guests per available seat by country.
+
+There is also a scenario lab (levers, route changes, seasonal mix, sensitivity,
+scenario library), a validation page, and **Ask the model**. That last page is an
+OpenRouter-backed chatbot whose tools cover the brief's five what-if questions and
+call the same functions as the pages (`.env.example` holds the key and model
+config). See [`app/README.md`](app/README.md) for the page guide, deployment and
+the read-before-trusting notes.
 
 ```python
 from pipeline.simulator import Simulator, Scenario, RouteEdit
@@ -257,7 +263,7 @@ in sign, small. Source-market public holidays are still not covered; see
 
 | # | Criterion | Where |
 | --- | --- | --- |
-| 01 | Working simulator, not a report | [`app/simulator.py`](app/simulator.py) — scenario builder, contribution bars, save/compare library |
+| 01 | Working simulator, not a report | [`app/`](app/README.md) — question pages, scenario lab, sensitivity tornado, chatbot, save/compare library |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
@@ -277,14 +283,15 @@ in sign, small. Source-market public holidays are still not covered; see
 - **Simulator is built and served.** The chain and the learned layer are
   packaged in `pipeline/hybrid.py` + `pipeline/simulator.py`
   (`Scenario`/`Simulator`, signed and dated route edits, market levers, an
-  attribution guard), and `app/simulator.py` exposes them with a scenario
-  builder, monthly/seasonal baseline-vs-scenario views, one-at-a-time
-  contribution bars, a supply-side-only market breakdown, a route explorer, a
-  live T5 replay and a save/compare library. Market-level output remains
+  attribution guard), and `app/streamlit_app.py` exposes them with a page for
+  each headline question, a scenario lab (contribution bars, sensitivity
+  tornado, save/compare library), a validation page and a chatbot. Market-level output remains
   labelled supply-side-only, and a new origin is explicitly an analog estimate.
-- **Remaining UI polish (optional):** per-market confidence intervals, a
-  scheduled refresh of the held-forward baseline when new schedules arrive, and
-  turning guest-night impact into occupancy once room-capacity data exists.
+- **Remaining UI polish (optional):** per-market confidence intervals, and a
+  scheduled refresh of the held-forward baseline when new schedules arrive.
+  Occupancy is shown as an indicative conversion: published room stock and an
+  assumed number of guests per room. Measured room-capacity data would replace
+  those assumptions.
 - **52 air-only origins** have no measured hotel capture rate. OpenSky data in
   `data/raw/opensky/` is intended to close this and is not yet consumed; it is
   pulled by `tools/fetch_opensky.py`, which spends credits and so has not been
@@ -300,5 +307,5 @@ in sign, small. Source-market public holidays are still not covered; see
 | `README.md` | this file — submission overview, setup, how to run |
 | [`docs/METHODS.md`](docs/METHODS.md) | **start here** — methods, results, decision log, reproducibility |
 | [`docs/competition-brief.md`](docs/competition-brief.md) | challenge framing (provided by the organisers) |
-| [`app/README.md`](app/README.md) | the Streamlit simulator — question-to-lever mapping, caveats, deployment |
+| [`app/README.md`](app/README.md) | the Streamlit app — pages, chatbot, build, deployment, caveats |
 | [`docs/PITCH_DECK.md`](docs/PITCH_DECK.md) | 10-page product pitch deck source |

@@ -1,105 +1,110 @@
-# ATRC Flight → Hotel Demand Simulator
+# ATRC Flight → Hotel Demand Simulator (Streamlit app)
 
-Run from the repository root after `uv sync`:
+An interactive front end on the packaged model (`pipeline/simulator.py`). Judges and
+planners can test flight changes and see the effect on Abu Dhabi hotel guest-nights.
+
+## Run it
+
+From the repository root, after `uv sync`:
 
 ```bash
-.venv/bin/streamlit run app/simulator.py
+.venv/bin/python -m app.build_model          # once; needs data/raw/competition/
+.venv/bin/streamlit run app/streamlit_app.py
 ```
 
-The app wraps the packaged model in `pipeline.simulator`. On startup it loads
-the fitted cache from `outputs/models/simulator_full.pkl` when one exists
-(instant) and otherwise fits the competition pack once (~1–2 minutes) and saves
-the cache. The pickle carries the fitted boosters, chain parameters, the supply
-cache and the model's categorical encodings, so a loaded app can score
-scenarios without re-reading the pack.
+`build_model` fits the model and replays the back-tests. It writes two files to
+`outputs/models/` (gitignored):
 
-## What it answers
-
-The scenario builder maps the brief's questions onto levers:
-
-| Question | How to express it |
+| File | What it holds |
 | --- | --- |
-| New route from a country that didn't fly here | Pick the closest **model market** as an analog, add the city/airline, set weekly seats, and name the origin in the label column — the estimate is read from the analog's behaviour and labelled as such |
-| Airline runs more (or fewer) flights per week | Signed **Seats/week Δ** = ±Δ flights × seats per flight on an existing route, with optional start/end months |
-| Airlines add seats via larger aircraft | Same row: **Seats/week Δ** = flights/week × Δ seats per flight |
-| A higher/lower share of seats gets filled | Global **Load-factor multiplier**, or a per-market **Load factor ×** row |
-| The mix of countries shifts with the seasons | Per-market **Seats ×** row, or a route edit scoped to a season (e.g. 2026-11 → 2027-02) |
+| `simulator_full.pkl` | the fitted simulator (scenario model, back-test model, learned length of stay, supply cache) |
+| `validation.parquet` | held-out predictions vs actuals for the Validation page |
 
-The Results tab shows the horizon delta in guest-nights and arrivals, monthly
-and seasonal baseline-vs-scenario charts, the parametric chain stages beside the
-hybrid, one-at-a-time contribution bars (which factor moves the number most),
-and a supply-side-only market breakdown. The Route insights tab ranks markets by
-hotel guests per 1,000 available seats and explores current weekly route supply.
-The Validation tab replays the T5 competition window live. The Scenario library
-saves runs to `outputs/sessions/` (parquet + JSON) with downloads and a
-two-scenario comparison.
+With these two files present, the app starts in about a second and never reads the
+licensed pack. Without the pickle, the app fits from the pack on first start (about
+1–2 minutes). If the pack is also missing, it shows an error explaining what to ship.
+
+## Pages
+
+| Page | Answers |
+| --- | --- |
+| **Overview** | What the model does and how accurate it is. A Sankey diagram follows a year of seats to hotel arrivals. Shows live default answers to the three questions. |
+| **New route** | *How many extra hotel nights would a new twice-weekly flight from a given country generate?* Pick a country (or a new one priced on an analog market), flights per week, aircraft, start month and duration. Shows guest-nights, arrivals and yield per seat, a monthly chart, and a funnel of where the seats go. A toggle ranks all 33 origins for the same service. |
+| **Winter flight cut** | *How much would winter hotel occupancy suffer if an airline reduced its flights?* Pick a route and the number of weekly flights cut. Shows guest-nights lost, the share of the season's demand, baseline vs scenario, and an **indicative** occupancy change. |
+| **Guests per seat** | *Which countries bring in the most hotel guests per available seat?* Measured ranking, conversion vs length-of-stay bubble chart, month-by-market heatmap, and a table. |
+| **Scenario lab** | Combines network levers, route changes and seasonal market-mix shifts. Shows each change's contribution, a ±10% sensitivity tornado ("which factors move the number most"), and a session scenario library with compare and download. |
+| **Ask the model** | Chatbot for the brief's five what-if questions, with suggested prompts, an inline chart per scenario, and every model call shown. |
+| **Validation** | Held-out back-test (Aug 2025 – Feb 2026): hybrid vs fixed-ratio chain vs actual, by month and by market-month, plus what the model can and cannot say. |
+
+## Code layout
+
+| File | Role |
+| --- | --- |
+| `streamlit_app.py` | Entry point: page config, navigation, sidebar |
+| `core.py` | Model loading, cached scoring, `summarize()`, one scenario builder per brief question (`new_route`, `frequency_change`, `gauge_change`, `seasonal_mix`), supply and yield tables, occupancy conversion |
+| `charts.py` | Plotly builders on one palette: grey baseline, blue scenario, blue/red for gains and losses |
+| `agent.py` | OpenRouter client and the chatbot's tools, all thin wrappers over `core.py` |
+| `ui.py` | Formatting and shared page snippets |
+| `views/` | One file per page |
+| `build_model.py` | Builds the artifacts above |
+
+Pages and chatbot share `core.py`, so the same question gives the same number
+everywhere. Nothing in `pipeline/` is modified by the app.
+
+## Chatbot setup
+
+The chatbot needs an [OpenRouter](https://openrouter.ai/) API key. The first
+non-empty source wins:
+1. the page's sidebar;
+2. Streamlit secrets;
+3. environment variables;
+4. a repo-root `.env`.
+
+Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY` and, optionally,
+`OPENROUTER_MODEL` (default `openai/gpt-4o-mini`; any tool-capable model works).
+
+| Question in the brief | Tool |
+| --- | --- |
+| A new route opens from a country that didn't fly here | `new_route` (closest analog market + `new_country` label) |
+| An airline runs more or fewer flights per week | `change_frequency` |
+| Airlines add seats through larger aircraft or extra flights | `change_seats` |
+| A higher or lower share of seats gets filled | `change_load_factor` |
+| The mix of countries shifts with the seasons | `shift_market_mix` |
+
+Supporting tools: `rank_markets`, `route_supply`, `model_facts`. The system prompt
+requires every number in an answer to come from a tool result.
+
+## Deploy (Streamlit Community Cloud)
+
+1. Create an app from the repository with entrypoint `app/streamlit_app.py`,
+   Python 3.12 or newer, and dependencies from `app/requirements.txt`. The theme is in
+   `.streamlit/config.toml` at the repository root.
+2. Make the two `outputs/models/` files available to the deployed app. They are
+   gitignored, and they contain data derived from the licensed competition pack, so
+   keep any deployment private to the judges. The pack itself never needs to be
+   deployed.
+3. Add `OPENROUTER_API_KEY` (and optionally `OPENROUTER_MODEL`) under the app's
+   **Secrets**.
+
+Saved scenarios live in the browser session; use the download button to keep them.
 
 ## Read this before trusting a number
 
-- **Market rows are supply-side-only.** The pack's flight market is the last
-  departure country before AUH; the hotel market is guest nationality. The join
-  is structurally wrong (docs/METHODS.md §4.5) and capture exceeds 1.0 in five
-  markets, so market-level levels are not measured origin demand. Aggregate
-  results are the safe read.
-- **New origins are analog estimates.** The model's market categorical has 33
-  fixed levels; a genuinely new country is modelled on a chosen analog market.
-- **Occupancy is not computed.** The pack has no room-capacity or room-nights
-  data, so winter impact is reported as guest-nights lost/gained. Adding hotel
-  capacity data would turn that into occupancy points.
-- **The baseline beyond 2026-02 is held forward, not forecast.** Each future
-  month repeats the same calendar month one year earlier, so seasonality carries
-  but no new airline schedule is invented. Read those months as scenario
-  differences.
-- **Market attribution caveats aside**, the hybrid is validated: T5 WMAPE
-  20.55% against 32.77% for the parametric chain, with −0.14% aggregate bias.
-
-## Chatbot endpoint (`/chatbot`)
-
-`app/pages/chatbot.py` is a second page served at `/chatbot` (Streamlit
-multipage; the simulator stays at `/`). It is a full agent over
-[OpenRouter](https://openrouter.ai/) whose tools call the real fitted model:
-
-- `run_scenario` — scores a what-if end to end (new routes, ± weekly flights,
-  aircraft/seat changes, load-factor and seasonal-mix levers) and returns the
-  guest-night delta, the changed window and the top market movers;
-- `get_market_ranking` — hotel guests per 1,000 seats, capture, ALOS per market;
-- `get_route_supply` — current weekly seats/flights per route, for sizing edits;
-- `get_model_facts` — pinned validation numbers, horizon, projection rule,
-  market list and caveats.
-
-Every number in an answer comes from a tool result; the system prompt forbids
-the model from inventing figures and carries the attribution caveats, so the
-chat answers new-origin questions as labelled analog estimates and reports
-winter impact in guest-nights.
-
-**Configuration** (first non-empty wins): sidebar fields → `st.secrets` →
-environment variables → repo-root `.env`. Copy `.env.example` to `.env` and
-fill in `OPENROUTER_API_KEY` and `OPENROUTER_MODEL` (default
-`openai/gpt-4o-mini`, changeable in the sidebar, which can also save both to
-`.env`). `.env` is gitignored.
-
-## Deploy for a short demo
-
-The app is prepared for [Streamlit Community Cloud](https://share.streamlit.io/),
-which provides free Streamlit hosting. Vercel is designed around short-lived web
-functions and is not a suitable host for Streamlit's persistent server/WebSocket
-process.
-
-1. Fit once locally so `outputs/models/simulator_full.pkl` exists, then commit
-   that pickle plus the app source and `app/requirements.txt` to the repository
-   branch Community Cloud can access. `outputs/` is gitignored by default; the
-   pickle is the one artifact the hosted app needs, because the competition pack
-   under `data/raw/competition/` is licensed for competition use only and must
-   not be published.
-2. In Community Cloud, create an app from that repository and set the entrypoint
-   to `app/simulator.py`.
-3. In **Advanced settings**, select Python 3.12 (or newer) and point
-   dependencies at `app/requirements.txt`.
-4. Deploy. Since the GitHub repository is private, the app will also be private
-   by default; keep it private to stay within the competition data licence.
-5. Share the generated `*.streamlit.app` URL with the judges.
-
-The free service sleeps after 12 hours without traffic; opening the app wakes it
-again. Saved scenario runs live on the app's local filesystem and may be lost if
-the hosted instance is rebuilt or restarted; each saved run has a download
-button.
+- **National totals are the reliable read.** On held-out months the model scored
+  20.55% WMAPE on new hotel arrivals (fixed-ratio chain 32.77%), and the national
+  total was within 0.14%.
+- **Market splits are supply-side.** In the flight data a market is the last
+  departure country; in the hotel data it is guest nationality. Connecting traffic
+  therefore lands on hubs, and five markets show more hotel arrivals than
+  terminating passengers (marked ⚠).
+- **New flights are priced on capacity.** Added seats join the market's busiest
+  existing route. The model's route and airline counts mostly encode market size, and
+  counting one service as a new route inflates estimates several-fold. That variant
+  is an opt-in toggle on the New route page.
+- **New countries are analog estimates.** The model knows 33 markets, so a country
+  that never flew here is priced on a market you choose, and labelled.
+- **After 2026-02 the baseline repeats last year's schedule.** Results are the
+  effect of a change, not a forecast.
+- **Occupancy is indicative.** The pack has no room data. The app converts
+  guest-nights using the published room stock (34,000, DCT 2024) and an editable
+  guests-per-room assumption (default 1.7).
