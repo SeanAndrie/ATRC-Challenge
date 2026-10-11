@@ -35,7 +35,9 @@ pipeline/hotel_supply.py
 pipeline/calendar_events.py   UAE event calendar (Ramadan, Eid, National Day, NYE)
 pipeline/hybrid.py            canonical chain + LightGBM layer (notebook and simulator share it)
 pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
-notebooks/         three marimo notebooks
+pipeline/sensitivity.py       empirically measured lever spreads + Sobol (sensitivity view 2)
+pipeline/tests/    test_sensitivity.py (sensitivity-module check)
+notebooks/         four marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
 app/               Streamlit app: pages, chatbot agent, model build script
@@ -82,6 +84,7 @@ in particular is quota-limited and may not be repeatable.
 
 ```
 .venv/bin/python pipeline/dct/dct_validate.py        # data reconciliation
+.venv/bin/python pipeline/tests/test_sensitivity.py     # empirical lever spreads; writes no report
 .venv/bin/streamlit run app/streamlit_app.py         # the interactive prototype
 .venv/bin/python -m marimo export html --no-include-code notebooks/hybrid_layer.py -o out.html
 ```
@@ -94,6 +97,8 @@ December 2017 DCT report states 4,875,499 guests, and the parsed months sum to
 The model itself is deterministic — fixed seeds, single thread — so the
 notebook reproduces every published number exactly; the findings behind each
 figure are recorded in [`docs/METHODS.md`](docs/METHODS.md).
+`test_sensitivity.py` writes no report: it checks the empirical-sensitivity
+module on a synthetic panel (METHODS §3.4).
 
 ## Streamlit simulator
 
@@ -151,12 +156,16 @@ observed / projected / scenario. See
 
 ```
 .venv/bin/python -m marimo edit notebooks/hybrid_layer.py    # the deliverable
+.venv/bin/python -m marimo edit notebooks/sensitivity_empirical.py # §3.4 empirical view
 .venv/bin/python -m marimo edit notebooks/linkage_study.py   # Phase 1 evidence
 .venv/bin/python -m marimo edit notebooks/flight_analysis.py # Phase 1 evidence
 ```
 
 `hybrid_layer.py` is the submission: Part A is the parametric chain, Part B the
-hybrid LightGBM layer, both scored on one panel in one run. `linkage_study.py` is
+hybrid LightGBM layer, both scored on one panel in one run.
+`sensitivity_empirical.py` is the §3.4 companion that measures each lever's actual
+month-to-month spread and reruns the Sobol on those bounds.
+`linkage_study.py` is
 the main public-data analysis and `flight_analysis.py` is a read of the OpenSky
 ADS-B extract; both are Phase 1 background kept as evidence, and neither is part
 of the deliverable. The OpenSky puller is a marimo notebook too, but it lives in
@@ -266,7 +275,7 @@ in sign, small. Source-market public holidays are still not covered; see
 | 01 | Working simulator, not a report | [`app/`](app/README.md) — question pages, scenario lab, sensitivity tornado, chatbot, save/compare library |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
-| 04 | Sensitivity analysis | T6 — SALib Sobol + one-at-a-time elasticities |
+| 04 | Sensitivity analysis | T6 a-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |
 | 05 | Granularity by market and season | 33-market panel, monthly season index — **attribution unvalidated, see the warning above** |
 | 06 | Decision relevance | capture spread is the allocation lever; **market levers misfiled, see the warning above** |
 | 07 | Reproducibility | deterministic model (fixed seeds, single thread); [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |

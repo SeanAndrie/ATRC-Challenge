@@ -51,6 +51,39 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def readme_howto(mo):
+    mo.md(r"""
+    ## How to read this notebook
+
+    Every step in the analysis has been given a short explanation. Each one opens
+    with an **"In plain words"** sentence that says what the step does and why it
+    exists without any jargon, then moves into **"The detail"** for the mechanics.
+
+    The naming below doubles as the reading plan:
+
+    | step | what it answers |
+    | --- | --- |
+    | **0.1–0.5** | where the data comes from and the panel is built (shared by both models) |
+    | **A.1–A.6** | the parametric chain: does the arithmetic reproduce reality, and which levers move the number? |
+    | **B.1–B.8** | the hybrid layer: what LightGBM learns, how it is validated, and where it beats the chain |
+    | **C** | what the final pins protect |
+    | **Glossary** | plain-words definitions of the terms used throughout |
+
+    Two honest notes you should read first (both stay with you the whole way):
+
+    * **The `market` key is not trustworthy at market level.** The flight table
+      files a route by its *last departure point*; the hotel table files a guest by
+      *nationality*. The panel joins the two as if they were the same object, which
+      is false. *Aggregate* results survive this (the error cancels in the national
+      total); *market-level* attribution does not. Everything here is that line,
+      kept honest.
+    * **Pins, not vibes.** The final block asserts the headline numbers. If a real
+      change moves one, the notebook fails loudly instead of drifting quietly.
+    """)
+    return
+
+
 @app.cell
 def _():
     import pathlib
@@ -81,6 +114,32 @@ def _():
     return cl, go, hybrid, np, pd
 
 
+@app.cell(hide_code=True)
+def step0_1_sources(mo):
+    mo.md(r"""
+    #### Step 0.1 — The three source tables
+
+    **In plain words:** the whole analysis starts from three spreadsheets — one
+    about flights into Abu Dhabi, one about the hotel guests who actually stayed,
+    and one with the period we have to *predict* (the competition test window).
+
+    **The detail.** `cl.read_flights()` loads `flight_data.xlsx` (117,608
+    flight rows — every scheduled flight into the region), with columns like
+    `Total Seats`, `Total PAX`, `Total P2P` (passenger-to-passenger), `Total
+    Transfer`, `Total Transit`, and a market name. `cl.read_international_train()`
+    loads the hotel train table (per `Nationality` × month: `Guests`,
+    `New Arrivals`). `cl.read_international_test()` loads the same shape for the
+    held-out test window (2025-08 → 2026-02) — and note it has **no `Guests`
+    column**; that single fact later decides what we can and cannot score out of
+    sample.
+
+    Parsing quirks live inside `pipeline/competition/load.py`, not here: this
+    notebook never reads the `xlsx` files directly, so there is exactly one place
+    to fix a read problem.
+    """)
+    return
+
+
 @app.cell
 def _(cl):
     # The repaired loader owns parsing; this notebook never touches the xlsx
@@ -89,6 +148,25 @@ def _(cl):
     intl_train = cl.read_international_train()
     intl_test = cl.read_international_test()
     return (flights,)
+
+
+@app.cell(hide_code=True)
+def step0_2_firstlook(mo):
+    mo.md(r"""
+    #### Step 0.2 — A first look at the flights table
+
+    **In plain words:** a quick sanity scan of the raw flight data before any
+    modelling — rows, columns, types, missing values, and basic summary
+    statistics.
+
+    **The detail.** Three trivial cells do the scanning: `head()` (first five
+    rows), `info()` (dtypes and null counts), and `describe()` (means, min/max,
+    percentiles). Nothing is learned here; the point is the opposite — catch a
+    malformed table *before* it silently feeds a model. If `Total_PAX` ever
+    exceeded `Total_Seats`, or a `market` came back as `NaN`, this is where a
+    reader would notice.
+    """)
+    return
 
 
 @app.cell
@@ -109,6 +187,33 @@ def _(flights):
     return
 
 
+@app.cell(hide_code=True)
+def step0_3_panel(mo):
+    mo.md(r"""
+    #### Step 0.3 — Building the panel: the one place both models meet
+
+    **In plain words:** we glue the flights and the hotel guests into one table of
+    market × month, then flag the trickiest assumption in the whole project — and
+    it is an assumption we cannot fix from this pack.
+
+    **The detail.** `hybrid.build_panels()` returns the canonical panel plus the
+    categorical encodings both models share. The join key is `market`, and the
+    reason this notebook exists is that **the two tables mean different things by
+    "market"**:
+
+    * flight side — `Departure Country Name`, the *last* departure point before
+      Abu Dhabi;
+    * hotel side — `Nationality`, the guest's citizenship.
+
+    So this panel asserts "departure country == nationality". It is the model's
+    one structural weakness (Section 4.5 in `docs/METHODS.md`). The row count is
+    **1,405 market-months, 33 markets**, and a further **12 hotel-only markets**
+    that have guests but no flights — kept as a residual, never invented a capture
+    rate.
+    """)
+    return
+
+
 @app.cell
 def _(hybrid):
     # The single canonical build now lives in pipeline/hybrid.build_panels():
@@ -124,6 +229,34 @@ def _(hybrid):
 @app.cell
 def _(train_m):
     train_m.head()
+    return
+
+
+@app.cell(hide_code=True)
+def step0_4_integrity(mo):
+    mo.md(r"""
+    #### Step 0.4 — T1 / ML-0: are the bookkeeping identities actually true?
+
+    **In plain words:** before trusting any model we check two *arithmetic facts*
+    that have to be exactly true in every one of 117,608 rows — this is
+    accounting, not an assumption. If either fails, nothing downstream can be
+    trusted.
+
+    **The detail.** Two identities are pinned:
+
+    1. **PAX = P2P + Transfer + Transit.** Every passenger is either a transfer, a
+       transit, or point-to-point. `P2P` (the "real" arriving passengers) is
+       *defined* as total PAX minus transfer/transit, so this identity must hold
+       to within floating-point noise everywhere.
+    2. **Load factor = PAX / Seats.** The load factor column must equal the ratio
+       of its two components everywhere it is used.
+
+    Both are checked to `1e-9` absolute error. The cell also computes the global
+    **ALOS** (`Guests / New Arrivals` = **3.602**) and lists the 12 hotel-only
+    markets so nobody later treats their missing flight supply as a download
+    failure. It is called **T1** for the chain and **ML-0** for the model because
+    one table, one check, both parts.
+    """)
     return
 
 
@@ -180,10 +313,41 @@ def _(fa, flights, mo, panel, pd, test_m):
     return alos_global, identity_ok, lf_ok
 
 
+@app.cell(hide_code=True)
+def step0_5_params(mo):
+    mo.md(r"""
+    #### Step 0.5 — Fitting the chain's parameters
+
+    **In plain words:** the chain's only real "model" is three ratios fitted from
+    the train panel: the capture rate (guests ÷ inbound passengers), the ALOS
+    (nights ÷ guests), and a season profile. This cell computes them.
+
+    **The detail.** `fit_params(panel)` returns four things:
+
+    * `capture[m]` — per-market **volume-weighted** ratio `Σ New Arrivals / Σ
+      P2P`. Volume-weighted because summing first lets a big market outvote a thin
+      one.
+    * `alos[m]` — `Σ Guests / Σ New Arrivals`, same idea.
+    * `season` — a 12-value monthly profile: actual arrivals in month *m* divided
+      by what `P2P × capture` would imply, normalised to mean 1. It cleans out the
+      calendar shape the seat supply alone does not explain.
+    * `global_capture` / `global_alos` — the same ratios across all markets.
+
+    Two things worth knowing now: **capture is capped at 5.0** (there is a whole
+    step about it later — A.5), and a fancy "empirical-Bayes shrinker" was tried
+    to tidy thin markets and **rejected**, because the real spread between markets
+    (0.085 → 5.854) is bigger than what a Beta-binomial prior can even represent.
+    That spread is a signal, not noise.
+    """)
+    return
+
+
 @app.cell
 def _(hybrid, panel):
     # The canonical fit_params (and its cap semantics) now lives in
     # pipeline/hybrid.py; the notebook and the simulator share one engine.
+    # In plain words: capture[m] = guests per inbound passenger per market,
+    # volume-weighted; ALOS[m] = nights per guest; season is a 12-month profile.
     fit_params = hybrid.fit_params
     params = fit_params(panel)
     return fit_params, params
@@ -223,6 +387,33 @@ def _(mo):
 
     Every ratio below is measured from the data or flagged as an assumption. No
     fitted model, no residual structure left unexplained.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def stepA_1_t2(mo):
+    mo.md(r"""
+    #### Step A.1 — T2: why the first three stages are *exact*
+
+    **In plain words:** the simulator's front half (seats → passengers → P2P) is
+    pure arithmetic with no fitted numbers. We turn it on with all levers at 1 and
+    confirm it reproduces the measured data exactly. That is what licenses
+    everything after it.
+
+    **The detail.** `simulate(panel, params)` walks the chain
+    `Seats → PAX (× load factor) → P2P (× P2P share) → New Arrivals (× capture ×
+    season) → Guest-nights (× ALOS)`. With unit levers the first three stages must
+    reproduce the input columns to `1e-6`; `chain_ok` records that. The waterfall
+    chart then shows each stage as a percentage of scheduled seats, so a reader
+    sees how much of the original seats actually reach each step. The punchline:
+
+    > If the first three stages are exact, only the fourth (conversion) is worth
+    > learning. That is the entire argument for Part B.
+
+    It is also the honest scope note: the last two stages carry the model's only
+    estimates, and the waterfall is about the *train* panel — the honest test of
+    those estimates comes in T4/T5.
     """)
     return
 
@@ -289,6 +480,25 @@ def _(chain_ok, go, mo, p2p_err, paxt_err, stage_totals):
     return
 
 
+@app.cell(hide_code=True)
+def stepA_2_t3(mo):
+    mo.md(r"""
+    #### Step A.2 — T3: the optimistic number (in-sample fit)
+
+    **In plain words:** score the chain on the same rows it was fitted on. It looks
+    good, but "good on your own homework" proves little — the next two steps rep-
+    resent the real tests.
+
+    **The detail.** `wmape(actual, pred)` is the weighted mean absolute percentage
+    error: `100 × Σ|actual − pred| / Σ|actual|`. Because it divides by the *sum*
+    of actuals (not per-row), a big market cannot hide a small one's error. T3
+    scores 27.3% (New Arrivals) and 24.8% (guest-nights) on the 1,405
+    market-months **that the parameters were fitted on** — the ceiling, not the
+    truth. Everything that follows exists so this number is never quoted as proof.
+    """)
+    return
+
+
 @app.cell
 def _(mo, out, panel, wmape):
     # T3 in-sample fit of the full training panel.
@@ -310,9 +520,38 @@ def _(mo, out, panel, wmape):
     return ins_guest, ins_new
 
 
+@app.cell(hide_code=True)
+def stepA_3_t4(mo):
+    mo.md(r"""
+    #### Step A.3 — T4: the leave-tail holdout, and why the split date matters
+
+    **In plain words:** we fake "the future": fit on everything up to January 2025,
+    predict February–July 2025, and compare against what actually happened. The
+    prediction months were never seen by the fitted parameters, so the score is
+    honest.
+
+    **The detail.** The panel is split into `fit_panel` (ym ≤ 2025-01) and
+    `holdout` (2025-02..2025-07). The parameters are *refit on the truncated
+    panel* — reusing the full-panel parameters here would leak the future into the
+    "prediction". The chain is then scored against a **seasonal-naive baseline**:
+    per market, last year's average for the same calendar month. That naive guess
+    is the bar the chain has to clear (28.4% vs 36.0% — it clears it). Guest-nights
+    are also scored (25.6%), but remember the test window has no `Guests` column,
+    so T4/ML-4 is the only honest out-of-sample home for guest-nights.
+
+    Why 2025-01? A 6-month tail leaves 43 months to fit, and it keeps a year's
+    worth of seasonal shape inside the fit window. Part B reuses these exact
+    splits so its model can be scored on identical rows.
+    """)
+    return
+
+
 @app.cell
 def _(panel):
     # T4 leave-tail holdout: fit through 2025-01, predict 2025-02..2025-07.
+    # The holdout months are never seen by the fitted parameters (params are
+    # refit on fit_panel only, in the next step) - that is what makes the score
+    # an honest out-of-sample estimate rather than an in-sample one.
     fit_panel = panel[panel["ym"] <= "2025-01"]
     holdout = panel[panel["ym"] > "2025-01"].copy()
     return fit_panel, holdout
@@ -367,6 +606,27 @@ def _(ho, ho_guest, ho_new, ho_sn, holdout_tbl, mo):
     return
 
 
+@app.cell(hide_code=True)
+def stepA_4_t5(mo):
+    mo.md(r"""
+    #### Step A.4 — T5: the real competition test window
+
+    **In plain words:** run the fitted chain forward into the window the
+    competition actually wants predicted (2025-08 → 2026-02), using only the
+    flight supply. Score New Arrivals against the truth.
+
+    **The detail.** Fit **all** training data (the competition permits it — this is
+    the deploy-style run), predict the test panel's New Arrivals, and score with
+    `wmape` (32.8%). Crucially the cell also reports the **aggregate bias**: the
+    predicted national total vs the actual total. The chain lands within ~1% of
+    the aggregate — *that* is the property that survives the market-misfiling
+    defect (the error cancels nationally). The market-month error (32.8%) is large
+    and is **not** over-claimed: it is measured against a composition that is
+    misfiled between markets. Two numbers, two different kinds of honesty.
+    """)
+    return
+
+
 @app.cell
 def _(params, pd, simulate, test_panel, wmape):
     # T5 competition test window: fit on all training data, predict the held-out
@@ -409,6 +669,30 @@ def _(actual_total, mo, pred_total, score, test_new, test_panel):
     behind them conflate departure country with nationality, so the market-month
     WMAPE is measuring error against a composition that is misfiled. Read the
     gap below before quoting 32.8% as a fair chain baseline.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def stepA_5_cap(mo):
+    mo.md(r"""
+    #### Step A.5 — Is the capture cap hiding a defect?
+
+    **In plain words:** a few markets (CHINA = 5.854) have more guests than inbound
+    passengers — impossible *if* the market key were true. We cap the worst at 5.0,
+    then check the obvious worry head-on: **does the cap flatter the baseline?**
+    The answer is the opposite — removing the cap makes the chain *worse*.
+
+    **The detail.** The cap exists because capture is a contaminated coefficient,
+    not a probability; an overly-inflated number in the biggest market is partly
+    fitting *connecting traffic filed under the wrong market*. The honest test is
+    to re-fit the chain **with and without** the cap on the same holdout (T4) and
+    test window (T5) and compare. Uncapped: 36.10%; capped: 32.77% on T5. The cap
+    clips a coefficient that extrapolates badly, so it *improves* out-of-sample
+    accuracy and the **capped chain is the stronger, fairer baseline**. The
+    headline gap is therefore measured against the best version of the chain, not
+    a deflated one — this cell exists so nobody can say the baseline was easy to
+    beat.
     """)
     return
 
@@ -486,17 +770,51 @@ def _(
     return cap_delta, cap_tbl
 
 
+@app.cell(hide_code=True)
+def stepA_6_t6(mo):
+    mo.md(r"""
+    #### Step A.6 — T6: sensitivity — which lever can move the number most?
+
+    **In plain words:** briefly, if you could shake each of the six levers, which
+    shake would shake guest-nights most? The answer reflects the *room each lever
+    is allowed to move*, not what the data says actually moves.
+
+    **The detail.** Global sensitivity uses **Sobol** variance decomposition
+    (SALib). `total_nights(x)` is the six-multiplier chain summed over the panel;
+    SALib samples ~2,048 random 6-number combinations inside **per-lever ranges**
+    (seats 0.8–1.2, capture 0.7–1.3, everything else 0.9–1.1); the output
+    variance is then decomposed into each lever's share (S1, and ST with
+    interactions). One-at-a-time +10% elasticities give the signed direction
+    (all exactly 1.0, by construction).
+
+    Two honest caveats, because this is a frequently-read table:
+
+    * The ranges are **a-priori choices**, not measured spreads. Because the
+      chain is a pure product, the ST ranking mostly mirrors the widths *we*
+      chose (capture widest, hence "top"). It answers "which lever, given the room
+      we allow it", not "which lever really moved things in history".
+    * An empirical version (ranges derived from the data's own wobble) is a
+      planned follow-up experiment; it will be reported separately and honestly,
+      not silently swapped into this cell.
+    """)
+    return
+
+
 @app.cell
 def _(np, panel, params, pd):
     # T6 global sensitivity (SALib Sobol) over the six floating levers, plus
     # one-at-a-time elasticities for the signed direction.
+    #
+    # Honest caveat, in plain words: the bounds below are a-priori choices, not
+    # measured spreads. Because the chain is a pure product, the ST ranking mostly
+    # mirrors the widths we chose. An empirical-spread version is a planned,
+    # separately-reported follow-up experiment.
     cap_arr = panel["market"].map(params["capture"]).to_numpy(dtype=float)
     alos_arr = panel["market"].map(params["alos"]).to_numpy(dtype=float)
     season_arr = panel["month"].map(params["season"]).to_numpy(dtype=float)
     seats0 = panel["Total_Seats"].to_numpy(dtype=float)
     lf0 = (panel["Total_PAX"] / panel["Total_Seats"]).to_numpy(dtype=float)
     p2p_share0 = (panel["Total_P2P"] / panel["Total_PAX"]).to_numpy(dtype=float)
-
     def total_nights(x):
         seats = seats0 * x[0]
         pax = seats * lf0 * x[1]
@@ -547,6 +865,7 @@ def _(np, panel, params, pd):
             "ST": si["ST"],
         }
     ).sort_values("ST", ascending=False)
+
     return (sensitivity,)
 
 
@@ -672,13 +991,68 @@ def _(mo):
     return
 
 
+@app.cell(hide_code=True)
+def stepB_1_features(mo):
+    mo.md(r"""
+    #### Step B.1 — The features: what the model is allowed to see
+
+    **In plain words:** the model gets only *supply-side* facts — the market, the
+    month, seat volume, load factor, P2P share, and how many routes/airlines serve
+    the market. It never gets told the answer, or any ratio derived from the
+    answer.
+
+    **The detail.** `hybrid.featurize(panel)` builds the design matrix, and
+    `hybrid.cats` carries the fixed `market`/`month` categorical encodings. The
+    rule "no target-derived features" is the guarantee that keeps the head-to-head
+    with the chain honest: at prediction time the model has never seen New
+    Arrivals, capture or ALOS. It must *predict* the conversion from supply alone.
+    The in-function asserts pin the feature counts (13 and 9) so a future edit
+    cannot silently drop or add a feature.
+    """)
+    return
+
+
 @app.cell
 def _(hybrid):
     # The canonical featurize (and its in-function 13/9 feature-count asserts)
-    # lives in pipeline/hybrid.py; the market/month categorical encodings it
-    # needs are set inside by build_panels().
+    # lives in pipeline/hybrid.py; the categorical encodings it needs are set by
+    # build_panels().
+    cats = hybrid.cats
     featurize = hybrid.featurize
     return (featurize,)
+
+
+@app.cell(hide_code=True)
+def stepB_2_machinery(mo):
+    mo.md(r"""
+    #### Step B.2 — The model machinery (booster, Poisson, the 5-seed ensemble)
+
+    **In plain words:** this is what "let LightGBM learn the conversion" means, in
+    one cell: a purpose-built regression that learns *guests per terminating
+    passenger* (a "capture rate"), trained with settings chosen up-front — not by
+    shopping for test score — and repeated over five random starting points that
+    are then averaged.
+
+    **The detail.** Four functions come from `pipeline/hybrid.py` (the notebook
+    delegates so it always tests the packaged code the simulator ships):
+
+    * `fit_poisson(core, val, ...)` — runs a **Poisson regressor** on `log(P2P)`
+      as an exposure offset, so the model learns an intensity per passenger: a
+      learned capture rate. Early stopping watches `val` and returns the chosen
+      round count. A **booster** is the trained LightGBM object (a set of boosted
+      trees); the ensemble is five of them, one per seed.
+    * `predict_poisson(fit_df, pred_df, iters, ...)` — predicts, per market-month,
+      in **5 seeds**, and returns both the averaged prediction and the per-seed
+      list.
+    * `train_model(...)` — single-seed refit (used by the interpretation cell).
+    * `fit_alos(...)` — the learned length-of-stay model (ML-4).
+
+    The a-priori settings (depth ≤ 15 leaves, `min_child_samples=20`, lr 0.03,
+    L2 = 1.0, feature/bagging fractions 0.8, `deterministic=True`) were fixed
+    before any holdout was observed. Deterministic + single-threaded + fixed seeds
+    is what makes the whole notebook reproducible bit-for-bit.
+    """)
+    return
 
 
 @app.cell
@@ -694,11 +1068,40 @@ def _(hybrid):
     return fit_alos, fit_poisson, predict_poisson, train_model
 
 
+@app.cell(hide_code=True)
+def stepB_3_nested(mo):
+    mo.md(r"""
+    #### Step B.3 — Nested validation: the "why does it feel like two fits" cell
+
+    **In plain words:** every model needs two numbers: (1) *how many rounds* to
+    train — tuned on a small internal slice; (2) *how good it is* — measured on
+    rows it never trained on. These must use different months, or the second
+    number lies. This cell sets up the split that keeps them separate.
+
+    **The detail.** Within the T4 fit window we carve two internal tails:
+
+    * `core` (≤ 2024-07) trains, `val` (2024-08..2025-01) chooses the round count
+      via early stopping — this is the **internal tail**.
+    * `val5 = holdout` (2025-02..2025-07) is that role for T5: pick rounds on the
+      T4 holdout months, then refit the final ensemble on the whole panel.
+
+    The rule in one line: the *reported* holdouts (T4's `ho`, T5's `test_panel`)
+    are used for scoring only — never to choose hyper-parameters. Choosing rounds
+    on `ho` would make ML-2's score a tuned number, not an estimate. This is the
+    same discipline that says the LightGBM config itself was set a-priori.
+    """)
+    return
+
+
 @app.cell
 def _(fit_panel, holdout):
     # The internal validation tails inside each fit window. fit_panel/holdout are
     # Part A's T4 split, reused rather than restated; Part B only needs the two
     # nested tails for early stopping, never the holdout itself as a training set.
+    #
+    # Rule in one line: rounds are chosen on this internal tail; the reported
+    # holdout (ho / test_panel) is used for scoring ONLY. Different rows, or the
+    # score stops being an estimate.
     core = fit_panel[fit_panel["ym"] <= "2024-07"]
     val = fit_panel[fit_panel["ym"] > "2024-07"]
 
@@ -706,6 +1109,25 @@ def _(fit_panel, holdout):
     # through 2025-01, validate on the T4 holdout months.
     val5 = holdout
     return core, val, val5
+
+
+@app.cell(hide_code=True)
+def stepB_4_ml2(mo):
+    mo.md(r"""
+    #### Step B.4 — ML-2: the hybrid on the leave-tail holdout
+
+    **In plain words:** the model's first honest exam, on the exact same six-month
+    window the chain just sat. It posts ~21.7% vs the chain's 28.4% and the naive
+    baseline's 36.0% — and the gain survives averaging over five seeds.
+
+    **The detail.** Protocol in three moves: (1) `fit_poisson(core, val)` picks
+    rounds on the internal tail; (2) `predict_poisson(fit_panel, ho, ...)` refits
+    on the full fit window and predicts `ho` in all 5 seeds; (3) score the
+    averaged prediction (`ml_ho_new`) and the min/max across seeds
+    (`ml_ho_lo..ml_ho_hi`). The spread matters because a single seed can be lucky;
+    a gain that only one seed shows is not a gain.
+    """)
+    return
 
 
 @app.cell
@@ -747,6 +1169,27 @@ def _(
     """
     )
     return best_iter_t4, ml_ho_hi, ml_ho_lo, ml_ho_new, pred_ho
+
+
+@app.cell(hide_code=True)
+def stepB_5_ml3(mo):
+    mo.md(r"""
+    #### Step B.5 — ML-3: the hybrid on the competition window
+
+    **In plain words:** the headline result — the model against the chain on the
+    actual competition test months. The hybrid posts ~20.8% vs the chain's 32.8%,
+    tracking the aggregate and sharpening the market-month fit at the same time.
+
+    **The detail.** Same protocol as ML-2, one year later: `fit_poisson(fit_panel,
+    val5)` selects rounds on the T4-holdout months, then the final ensemble refits
+    on the **whole panel** and predicts the test window. `ml_t5_bias` is the
+    aggregate bias of the averaged ensemble. The cell then settles the "is the
+    baseline too weak?" question with Part A's cap numbers: the chain is 32.77%
+    at its strongest (capped) and 36.10% without the cap — the 12+ pp gap is
+    measured against the *better* chain. Honest scope note repeated at the bottom:
+    this gap is aggregate-valid but says nothing about market-level attribution.
+    """)
+    return
 
 
 @app.cell
@@ -824,6 +1267,32 @@ def _(
     return best_iter_t5, ml_t5_bias, ml_t5_hi, ml_t5_lo, ml_t5_new
 
 
+@app.cell(hide_code=True)
+def stepB_6_ml4(mo):
+    mo.md(r"""
+    #### Step B.6 — ML-4: guest-nights (New Arrivals × ALOS)
+
+    **In plain words:** guest-nights = arrivals × average length of stay. The chain
+    uses one fixed ALOS per market; the model *learns* ALOS from the data on the
+    same holdout, and the learned version is a little better when the two are
+    measured honestly.
+
+    **The detail.** Two ALOS candidates are scored against `ho.Guests`:
+
+    * chain: `pred_ho × ALOS[m]` from the T4 refit (`params_holdout`) —
+      `ho_guest` is Part A's 25.6%;
+    * learned: `pred_ho × alos_hat`, where `alos_hat = fit_alos(fit_panel, ho)`
+      predicts per-market-month ALOS with a 5-seed LightGBM regression on
+      `log(Guests / NewArr)`.
+
+    WMAPE is ~25.6% (chain) vs ~20.8% (learned). The header formula
+    `guest-nights = New Arrivals × ALOS` is itself an assumption worth stating:
+    it treats length of stay as market behaviour, not as a per-month accounting
+    artefact. (And it can only be scored on T4 — the test window has no `Guests`.)
+    """)
+    return
+
+
 @app.cell
 def _(fit_alos, fit_panel, ho, ho_guest, mo, params_holdout, pred_ho, wmape):
     # ML-4: guest-nights, chain ALOS vs learned ALOS. params_holdout is the T4
@@ -848,6 +1317,33 @@ def _(fit_alos, fit_panel, ho, ho_guest, mo, params_holdout, pred_ho, wmape):
     """
     )
     return (w_ml,)
+
+
+@app.cell(hide_code=True)
+def stepB_7_ml5(mo):
+    mo.md(r"""
+    #### Step B.7 — ML-5: what the model learned
+
+    **In plain words:** two pictures: which features mattered most, and how the
+    model's per-market capture compares to the chain's fixed ratio. Then a warning
+    about how *not* to read the first picture.
+
+    **The detail.** A single-seed model is refit on the whole panel. Picture 1:
+    LightGBM *gain* importance — `market` dominates, which is expected (markets
+    differ hugely). **The warning:** part of `market`'s importance is shrinking a
+    *noisy* ratio, and part is shrinking a *contaminated* one — `market` is the
+    join key that mislabels departure country as nationality. So the importances
+    are not a clean "market awareness" reading.
+
+    Picture 2: a scatter of chain `capture[m]` vs the model's in-sample learned
+    capture (`Σ predicted P2P`-weighted). Below the 45° line: thin markets the
+    chain's ratio overstates. **Five points sit beyond capture = 1.0** — the model
+    is forced by the data to assign more guests than inbound passengers to those
+    markets. That is the same market defect as CHINA's 5.854, now visible from the
+    model side. The learned rate is a calibration coefficient, never claimed as a
+    conversion probability.
+    """)
+    return
 
 
 @app.cell
@@ -915,6 +1411,32 @@ def _(best_iter_t5, featurize, go, mo, np, panel, params, pd, train_model):
             fig_cap,
         ]
     )
+    return
+
+
+@app.cell(hide_code=True)
+def stepB_8_ml7(mo):
+    mo.md(r"""
+    #### Step B.8 — ML-7: what the event calendar is actually worth
+
+    **In plain words:** does adding UAE-wide holiday features help? We test it once
+    — fit with and without — and report the difference. The row spent on this
+    matters: it is an *ablation* (one honest measurement), not a *tuning loop*
+    (which would quietly invalidate the holdout scores).
+
+    **The detail.** Both arms reuse the exact ML-2/ML-3 protocol
+    (`events=False` drops the four event features), so the two columns differ only
+    in features — same seed-0 round selection, same 5-seed refits. That is why it
+    costs 12 extra fits (hence "30 models" in Limitations). The result is small,
+    and the reasons are stated plainly: the features are nearly collinear with the
+    `month` categorical (Eid al-Adha sits in June or July every year), so the only
+    genuine signal is *Islamic drift* (Ramadan slid April → March → February
+    across the window) — which is why any effect concentrates in the test window.
+
+    "Recorded, not pinned": the assert just checks both arms actually ran — a pin
+    that *demanded* a gain would turn the ablation into the tuning search the
+    a-priori rule forbids.
+    """)
     return
 
 
@@ -1003,6 +1525,26 @@ def _(
         ]
     ).round(2)
     return (abl_summary,)
+
+
+@app.cell(hide_code=True)
+def stepC_pins(mo):
+    mo.md(r"""
+    #### Step C — what the pins protect
+
+    **In plain words:** one block that fails loudly if any headline number moves.
+    This is the notebook's contract with itself: pin the numbers in the write-up,
+    so a real change is caught and a silent drift is not.
+
+    **The detail.** T7 pins the chain, ML-6 pins the hybrid, and both assert the
+    hybrid beats the chain on identical rows. Because everything runs in one
+    notebook, "the chain baseline" is literally the value computed a few cells
+    up (no second copy to drift). Tolerances are tight enough to catch a real
+    change, loose enough to survive float noise — the model is stochastic, so
+    exact equality would be brittle. An export of this notebook fails the run if
+    any pin moves.
+    """)
+    return
 
 
 @app.cell
@@ -1100,6 +1642,54 @@ def _(
 
 
 @app.cell(hide_code=True)
+def glossary_plain(mo):
+    mo.md(r"""
+    ## Plain-words glossary
+
+    Short definitions of every term you have met, in the order you met them.
+
+    * **Market.** The key both tables are joined on. Flights call it the flight's
+      last departure country; the hotel table calls it the guest's nationality.
+      The mismatch is the project's central defect (aggregate survives; market
+      level does not).
+    * **P2P (point-to-point).** Passengers whose journey ends in Abu Dhabi —
+      i.e. total passengers minus those transferring/transiting through.
+    * **Load factor.** Seats actually filled: `Total PAX / Total Seats`.
+    * **WMAPE.** Weighted mean absolute percentage error —
+      `100 × Σ|actual − pred| / Σ|actual|`. Lower is better; it divides by the
+      *total* so small markets can't hide error.
+    * **Capture rate.** Guests per terminating passenger — the behavioural link
+      between flights and hotels. A calibration coefficient, not a probability
+      (it exceeds 1.0 in five markets, which is the defect talking).
+    * **ALOS.** Average length of stay in days: `Guests / New Arrivals`.
+    * **Seasonal-naive baseline.** Last year's average for the same calendar
+      month, per market. The chain has to beat it; it does (T4).
+    * **Holdout / leave-tail.** Months held back from fitting and used only for
+      scoring. "Leave-tail" because they are the *newest* months — a true
+      forward test, unlike a random split.
+    * **Internal tail.** A small slice of the *fit* window used only to pick how
+      many rounds to train. It must differ from the holdout, or the reported
+      score stops being an estimate.
+    * **Booster.** One trained LightGBM model (a set of boosted trees). Five of
+      them — one per seed — form the ensemble that is averaged into a prediction.
+    * **Poisson with an offset.** The model's objective. It predicts how many
+      events (new arrivals) happen per unit of exposure (passengers), instead of
+      modelling counts directly — exactly the "learned capture rate" idea.
+    * **5-seed ensemble.** Train five models from different random starts and
+      average their predictions. Guards against one lucky (or unlucky) seed.
+    * **A-priori config.** Model settings picked up-front from general good
+      practice (shallow, regularised) and *not* tuned on the evaluated holdouts.
+      Tuning on the holdouts would make the reported scores over-optimistic.
+    * **Ablation vs tuning.** An ablation removes a feature once and reports what
+      happened. Tuning would search many variants and report the best — which
+      silently re-used the test data. This notebook only ablated, on purpose.
+    * **Pins.** `assert` statements against the headline numbers. They leave no
+      room for the notebook to quietly tell a different story.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Limitations
@@ -1131,12 +1721,7 @@ def _(mo):
     * **Twelve hotel-only markets** have no flight supply (Australia, Brazil,
       Czechia, Denmark, Finland, Mexico, Morocco, Norway, Pakistan, Romania,
       South Africa, Sweden). They are a residual, not a modelled output.
-    * **VFR / purpose-of-travel is unmeasured.** Both capture rates absorb it by
-      construction — the measured one because it is a ratio of totals, the
-      learned one because it is fitted to the same totals. A simulator built on
-      this chain moves seats and capture separately, but must not imply the
-      visitor split is measured.
-    * **Season is one global monthly profile** in the chain. Market-specific
+    * *** **Season is one global monthly profile** in the chain. Market-specific
       seasonality is pooled because most markets have only 43 months, which would
       leave thin per-market monthly cells.
     * **No target-derived features.** The model never sees New Arrivals, capture

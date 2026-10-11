@@ -113,7 +113,7 @@ weight. The seven success criteria map to the work as follows:
 | 01 | A working simulator, not a static report | `notebooks/hybrid_layer.py` Part A (levers + charts), `app/simulator.py` (stub, [open work](#open-work-and-next-steps)) |
 | 02 | Transparent conversion chain, assumptions adjustable | [Phase 3](#phase-3--parametric-layer) |
 | 03 | Validation against history with an honest error metric | T3/T4/T5, WMAPE on holdout and test window |
-| 04 | Sensitivity analysis | T6 (SALib Sobol + one-at-a-time elasticities) |
+| 04 | Sensitivity analysis | T6 a-priori Sobol + empirically measured lever spreads (`pipeline/sensitivity.py`) |
 | 05 | Granularity by market and season | 33-market panel, global monthly season index — **market attribution unvalidated, see §4.5** |
 | 06 | Decision relevance | [Scope limits](#36-scope-limits-and-honest-positioning); capture spread is the allocation lever — **levers misfiled at market level, see §4.5** |
 | 07 | Reproducibility | [Reproducibility](#reproducibility), pinned assertions T7 |
@@ -135,6 +135,7 @@ weight. The seven success criteria map to the work as follows:
 | 2026-10-09 | Chain + hybrid extracted to a canonical package; scenario API for the Streamlit app; notebook delegates | `pipeline/hybrid.py`, `pipeline/simulator.py` |
 | 2026-10-10 | Simulator package hardened: lazy per-window fit, pickle persistence, immutable validated market multipliers, lever guards | `pipeline/simulator.py`, `pipeline/hybrid.py` |
 | 2026-10-11 | Learned ALOS shipped in the simulator's hybrid path; T4 guest-nights replayed live | `pipeline/simulator.py`, `pipeline/hybrid.py` |
+| 2026-10-11 | Empirical lever-spread sensitivity added as a second, labelled view; a-priori ranges kept as the simulator's decision space | `pipeline/sensitivity.py`, `notebooks/sensitivity_empirical.py`, `pipeline/tests/test_sensitivity.py` |
 
 The repository has a single commit (`Initial commit: ATRC Abu Dhabi
 flight-to-hotel analysis`); the working tree carries the Phase 2–4 work. Raw data
@@ -155,7 +156,9 @@ pipeline/competition/  competition-pack loader + audit
 pipeline/hotel_supply.py
 pipeline/hybrid.py            canonical chain + LightGBM layer (shared by notebook and simulator)
 pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
-notebooks/         three marimo notebooks
+pipeline/sensitivity.py       empirically measured lever spreads + Sobol (sensitivity view 2)
+pipeline/tests/    test_sensitivity.py (sensitivity-module check)
+notebooks/         four marimo notebooks
 docs/              METHODS.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
 app/               Streamlit simulator (built) + chatbot page
@@ -327,13 +330,63 @@ estimated rate is kept with the 5.0 cap as the only guard.
 
 ### 3.4 Sensitivity
 
-Test T6 runs a **SALib Sobol** global sensitivity over six levers plus
-one-at-a-time +10% elasticities. Every lever is multiplicative, so all six have
-unit elasticity by construction; the output variance is dominated by the
-wider-bound levers — capture (0.7–1.3) and seats/frequency (0.8–1.2) — with load
-factor, P2P share, ALOS and season (all 0.9–1.1) contributing proportionally
-less. This is why the chain reports a **range**, not a point. (Note: the SALib
-package import name is `SALib`, and `saltelli` is replaced by `Sobol.sample`.)
+Sensitivity is reported in **two labelled views** that answer different
+questions. Both use the same chain algebra and the same SALib Sobol
+decomposition; only the ranges differ.
+
+**View 1 — decision space (a-priori).** Test T6 shocks the six levers over the
+ranges the simulator exposes to a planner (capture 0.7–1.3; seats/frequency
+0.8–1.2; load factor, P2P share, ALOS, season 0.9–1.1). These are deliberately
+wider than observed — they are "how much room a planner gets". Every lever is
+multiplicative, so all six have unit elasticity by construction, and the output
+variance is dominated by the wider-bound levers: capture (ST 0.51) and
+seats/frequency (0.23), the rest at 0.06–0.07. This view says *which lever is
+**allowed** to move the number most*; it is what the UI's `LEVER_BOUNDS` encode.
+
+**View 2 — empirical spread (what actually moved).** Added 2026-10-11. For each
+lever, `pipeline/sensitivity.py` derives the month-level multiplier observed in
+the panel, `u = z / baseline`:
+
+| lever | month measure `z` | baseline |
+| --- | --- | --- |
+| seats / frequency | `Total_Seats` month-over-month | 1.0 |
+| load factor | `Total_PAX / Total_Seats` | market seat-weighted mean |
+| P2P share | `Total_P2P / Total_PAX` | market PAX-weighted mean |
+| capture rate | `New Arrivals / Total_P2P` | `capture[m]` (capped, shipped) |
+| ALOS | `Guests / New Arrivals` | `ALOS[m]` (shipped) |
+| season | `season[month]` (12 values) | 1.0 |
+
+The **volume-weighted 16th–84th percentile** becomes that lever's Sobol range
+(uniform and winsorized kernels are reported for robustness). The measured middle
+bands:
+
+| lever | q16 | median | q84 |
+| --- | ---: | ---: | ---: |
+| capture rate | 0.665 | 0.970 | 1.285 |
+| P2P share | 0.841 | 1.002 | 1.131 |
+| load factor | 0.889 | 1.019 | 1.099 |
+| ALOS | 0.883 | 0.980 | 1.090 |
+| seats / frequency | 0.943 | 1.023 | 1.127 |
+| season | 0.926 | 1.016 | 1.054 |
+
+Sobol on these bounds gives capture **ST 0.62**, P2P share **0.14**, load factor
+**0.073**, ALOS **0.070**, seats **0.050**, season **0.027**. The two views agree
+that **capture dominates**; they disagree about second place. A-priori grants
+seats a wide 0.8–1.2 and ranks it second, whereas measured seat supply only
+wobbles about ±9% month-over-month, so **P2P share** (the widest measured supply
+lever) takes its place. That disagreement is the point of measuring.
+`notebooks/sensitivity_empirical.py` (E1–E4) and
+`pipeline/tests/test_sensitivity.py` reproduce every number.
+
+**What view 2 does not do.** It does not replace the a-priori ranges: the UI must
+keep rooms a planner can press, and new-route / step-change scenarios
+legitimately exceed the historical wobble. The empirical ranges are
+informational — they sharpen the *reading* of criterion 04 and never overwrite
+`LEVER_BOUNDS`. Both views stay labelled; the empirical one also inherits the
+§4.5 caveat, since it measures movements of already-contaminated per-market
+coefficients. (SALib note: the package import name is `SALib`, `saltelli` is
+replaced by `Sobol.sample`, and the empirical wrapper seeds sampling and
+analysis so its indices are reproducible.)
 
 ### 3.5 Results and the test suite
 
@@ -655,6 +708,8 @@ the notebook.
 | Market attribution | Paired-panel capture per market, supply vs demand mix divergence, lower bound on misattributed guests | Capture > 1.0 in 5 markets (CHINA 5.854); ~903k guests misfiled; identity gap exactly 0 |
 | Origin-mix validation | Pack region mix vs SCAD embarkation mix (KTS 2025 t.6): supply, nationality, within-market signal, hub exposure | GCC gap +5.4–7.3 pp every year; TV 0.15–0.20; hub capture ~0.1; no coarser rescue |
 | ML hybrid | `notebooks/hybrid_layer.py` Part B: LightGBM Poisson with offset, same T4/T5 splits | T4 21.3%, T5 20.6%, guest-nights 20.8%; events worth +0.41/+0.25pp |
+| Empirical sensitivity | `notebooks/sensitivity_empirical.py` E1–E4: Per-lever monthly multiplier `u = z/baseline`; volume-weighted 16–84th pct bounds over 3 kernels; Sobol on measured vs a-priori bounds | Capture dominates both views; measured #2 is P2P share, a-priori #2 is seats |
+| Sensitivity module | `pipeline/tests/test_sensitivity.py`: Synthetic panel: lever series finite, three kernels ordered, `min_p2p` filters, Sobol responds to bounds, deterministic | All pass |
 
 ---
 
@@ -681,6 +736,7 @@ the notebook.
 | 2026-10-09 | Chain + hybrid extracted from the notebook into one canonical package (`pipeline/hybrid.py`), wrapped by a scenario API (`pipeline/simulator.py`) for the Streamlit UI; notebook delegates so there is a single model | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 | 2026-10-10 | Simulator package hardened after a critical audit: lazy per-window fit (fit trains only the selected window), save()/load() pickle persistence, market_seats_mult made an immutable tuple validated against the 33 markets, zero-supply/unknown-market/out-of-horizon guards, NaN-safe featurize, data_status column | [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
 | 2026-10-11 | Learned ALOS wired into the simulator's hybrid path: `monthly()`/`market()` guest-nights now match the documented 20.8% (T4), replayed live by `reproduce_holdout()`; `chain()` keeps the fixed per-market `ALOS[m]` so the parametric layer stays interpretable; ALOS trained once, persisted, backward-safe on load | [§4.2](#42-evaluation) and [Simulator package](#simulator-package-pipelinehybridpy--pipelinesimulatorpy) |
+| 2026-10-11 | Sensitivity split into two labelled views: a-priori decision ranges (T6 / `LEVER_BOUNDS`, untouched) and empirically measured lever spreads (volume-weighted 16–84th pct); empirics inform the reading and never overwrite the UI ranges | [§3.4](#34-sensitivity) |
 
 ---
 
@@ -783,6 +839,7 @@ uv sync
 .venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets; see METHODS 4.5
 .venv/bin/python pipeline/tests/test_market_origin_validation.py  # pack region mix vs SCAD embarkation mix; see METHODS 4.5
 .venv/bin/python pipeline/tests/test_simulator_package.py    # packaging gate; re-fits the simulator, writes no report
+.venv/bin/python pipeline/tests/test_sensitivity.py         # empirical lever spreads; synthetic panel, no report
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 cd data/processed && md5sum -c checksums.md5
 ```
@@ -798,6 +855,14 @@ the Part C assertions guard every pinned number for both models):**
 The model cells of the notebook delegate to `pipeline/hybrid.py` (see the
 Simulator package subsection below), so this export *is* the canonical model and
 the simulator scores the same numbers.
+
+The empirical-sensitivity companion is fast (no LightGBM) and reproduces §3.4's
+two views:
+
+```
+.venv/bin/python -m marimo export html --no-include-code notebooks/sensitivity_empirical.py \
+  -o /tmp/sensitivity_empirical.html
+```
 
 This trains 30 LightGBM models: a seed-0 early-stopping pass plus a five-seed
 refit for T4 and T5 (12), the same pair of arms again for the ML-7 ablation (12),
