@@ -1,189 +1,395 @@
 # ATRC Flight-to-Hotel Demand Simulator
 
-### From flight changes to explainable hotel-demand scenarios
+### Turning flight decisions into hotel-demand answers — in seconds, with the working shown
 
 **ATRC Challenge · DCT Abu Dhabi**  
-An interactive decision-support prototype that connects air supply to hotel demand.
+A working decision-support prototype that converts air supply into hotel guest-nights.
 
-*One transparent conversion chain. One trained LightGBM hybrid. One place to test “what if?”*
+*One transparent conversion chain. One learned conversion layer. One place to ask “what if?”*
 
-**Headline result:** held-out test WMAPE **20.55%** vs **32.77%** for the parametric baseline, at **−0.14%** aggregate bias.
+| Held-out accuracy | National-total bias | Gain over parametric baseline | Scenario answer time |
+| :---: | :---: | :---: | :---: |
+| **20.55% WMAPE** | **−0.14%** | **12.21 pp** | **seconds** |
 
-<!-- PAGE BREAK -->
+## 1. Executive summary
 
-# Contents
+**The problem.** Abu Dhabi plans flights and hotels with two separate teams and two separate sets of numbers. Nothing connects them, so a basic question like *“what happens to hotel nights if this route adds two flights a week?”* has no quick, defensible answer.
 
-1. **Title** — Flight-to-Hotel Demand Simulator
-2. **Contents** — The story in ten pages
-3. **The challenge** — Two plans, two sets of numbers, one missing link
-4. **The data** — What the competition pack does and does not tell us
-5. **Baseline model** — An auditable seats-to-guest-nights chain
-6. **LightGBM hybrid** — Learned, market-aware conversion
-7. **Product & results** — The simulator, the numbers, the decision boundary
-8. **Future 1** — Make market attribution decision-grade
-9. **Future 2** — Turn the prototype into a planning workflow
-10. **Thank you** — Pilot the next decision
+**What we built.** An interactive simulator that runs every flight change through an explainable chain — **Seats → Passengers → Point-to-point arrivals → New hotel arrivals → Guest-nights**. A **LightGBM Poisson model** replaces the chain's one weak link: the fixed “share of arriving passengers who become hotel guests”. It learns that share by market, by season and around UAE events.
 
-<!-- PAGE BREAK -->
+**How well it works.** On a held-out window the model never saw (Aug 2025 – Feb 2026), it predicts new hotel arrivals at **20.55% WMAPE**, against **32.77%** for the parametric chain. Its national total is **within 0.14%** of actual, and five random seeds all land between 20.30% and 20.85%.
 
-# The challenge: two plans that never meet
+**What a planner gets.** A Streamlit app with five tabs: scenario builder, results, route insights, validation and a scenario library. It also has a **plain-language chatbot** whose every number comes from the same model. Example answers from the prototype:
 
-## Flight capacity and hotel demand are planned separately
+- A new **twice-weekly, 300-seat route** (modelled on UK-market behaviour, Nov 2026 – Oct 2027) adds **≈ 40,000 guest-nights** and **≈ 8,200 new hotel arrivals**.
+- Cutting **7 weekly London flights** over winter 2026/27 costs **≈ 55,000 guest-nights**, about **1.5%** of national winter demand.
 
-Route launches, weekly frequency, aircraft gauge, load factors and seasonal schedules all move potential hotel demand — but today the aviation and hospitality teams use two separate forecasts and no shared model.
-
-### The brief’s five questions
-
-- A new route opens from a country that never flew here
-- An airline runs more (or fewer) flights per week
-- Airlines add seats — larger aircraft or extra flights
-- A higher (or lower) share of seats gets filled
-- The mix of countries flying in shifts with the seasons
-
-### Our response
-
-Pair an **explainable parametric chain** with a **LightGBM hybrid**, and expose both through an **interactive Streamlit simulator** that answers those questions in seconds.
-
-**Scorecard:** technical rigour 40% · creativity 20% · practicality 20% · communication 20%.
+**What makes it trustworthy.** We found and documented a structural flaw in the data: flight “country” is not the same as hotel “country”. So the product leads with numbers that hold at the national level, and labels market-level views honestly.
 
 <!-- PAGE BREAK -->
 
-# The data: a strong supply signal, with one honest caveat
+# 2. Intro / team overview
 
-### The competition pack
+## Who we are
 
-- **117,608** flight records across **33** departure markets
-- **1,405** matched market-months over **43** months (train: Jan 2022 – Jul 2025)
-- **231** market-months in the held-out test window (Aug 2025 – Feb 2026)
-- Flight identity holds: **PAX = P2P + transfer + transit**
+> *[Team name] — [university / organisation]*
 
-### Why point-to-point (P2P) is the denominator
+| Member | Role | Owned |
+| --- | --- | --- |
+| *[Name]* | Data & modelling lead | Data-pack loader and audit, parametric chain, LightGBM hybrid, validation |
+| *[Name]* | Product & simulator lead | Scenario API, Streamlit app, scenario library, deployment |
+| *[Name]* | AI & experience lead | Chatbot agent, grounded tools, guardrails, presentation and video |
 
-P2P strips out transfer and transit passengers. On the matched panel it explains hotel arrivals better than total PAX (**R² 0.877 vs 0.863**). Global capture **0.391**; global ALOS **3.60** nights per arrival.
+## What we delivered — a working prototype, not a concept
 
-### The caveat that shapes everything
+| Deliverable | What it is |
+| --- | --- |
+| **The model** | One canonical module (`pipeline/hybrid.py`): parametric chain + LightGBM hybrid, deterministic and reproducible |
+| **The scenario engine** | `pipeline/simulator.py`: six global levers, signed and dated route edits, analog estimates for new origins, horizon to Dec 2028 |
+| **The simulator app** | `app/simulator.py`: five tabs, live charts, contribution analysis, save and compare |
+| **The chatbot** | `/chatbot`: natural-language questions answered by four tools that call the real model |
+| **The evidence** | `docs/METHODS.md`: every test, every decision, every limitation, with dates |
 
-The flight market is **the last departure country before AUH**; the hotel market is **guest nationality**. The join is not valid for market attribution, and twelve hotel-only markets (Australia, Brazil, …) carry no flight supply.
+## How we work
 
-### Built to keep planning
-
-Observed supply ends **2026-02**; the model holds the same calendar month one year forward to **2028-12** for forward scenarios — clearly marked as a baseline, not a schedule forecast.
-
-<!-- PAGE BREAK -->
-
-# Baseline model: every conversion visible
-
-## Seats → PAX → P2P → New Arrivals → Guest-nights
-
-1. **Seats** — scheduled capacity from flight records
-2. **PAX** — seats × observed load factor
-3. **P2P** — PAX × observed point-to-point share
-4. **New Arrivals** — P2P × market capture (capped at 5.0), adjusted by monthly seasonality
-5. **Guest-nights** — New Arrivals × average length of stay (ALOS)
-
-Load factor and P2P share come straight from flight data; capture and ALOS are estimated from joined history. Every stage is inspectable and every ratio is a lever.
-
-### Historical baseline
-
-| Evaluation | New Arrivals WMAPE | Guest-nights WMAPE |
-| --- | ---: | ---: |
-| T4 holdout (Feb–Jul 2025) | **28.4%** | **25.6%** |
-| T5 test (Aug 2025–Feb 2026) | **32.77%** | Not scoreable — test has no Guests target |
-
-The T4 seasonal-naive arrivals benchmark is **36.0% WMAPE**. The capture cap helps the baseline (36.10% uncapped → 32.77% capped), so the headline comparison is against the stronger chain.
+- **Measure before assuming.** Every ratio in the chain is either read off the data or estimated from it, and labelled as such.
+- **Report the honest number.** We publish held-out error, not training fit. We state limits inside the product, not in an appendix.
+- **One source of truth.** The notebook, the app and the chatbot all call the same model, so they can never disagree.
 
 <!-- PAGE BREAK -->
 
-# LightGBM hybrid: learn the behavioural conversion
+# 3. The problem — and why it matters
 
-The model keeps the measured **Seats → PAX → P2P** arithmetic and replaces the fixed capture step with a **Poisson LightGBM model using log(P2P) as its exposure offset**. Five deterministic seeds are averaged.
+## Two plans that never meet
 
-### Inputs known at prediction time — never the target
+Almost every international visitor reaches Abu Dhabi by air, but only some of them stay in a hotel. Others are transferring to another flight, returning residents, or visiting family. The link between flights and hotels is therefore real but **indirect**. What matters is the **conversion rate** from arriving passenger to hotel guest, and that rate changes with the country of origin and the season.
 
-Market, month, time trend, seats, load factor, P2P share, transfer share, routes, airlines and UAE event-day features. No hotel target or target-derived feature enters a prediction, so the test window stays honest.
+Today, route decisions and hotel planning run on separate forecasts. Five everyday questions have no quick answer:
 
-### T5 held-out result
+1. A **new route** opens from a country that has never flown here.
+2. An airline runs **more or fewer flights** per week.
+3. Airlines add **seats**, through larger aircraft or extra flights.
+4. A **higher or lower share** of those seats is filled.
+5. The **mix of countries** flying in shifts with the seasons.
 
-| Model | New Arrivals WMAPE | Aggregate bias | Predicted arrivals |
+## Why it matters
+
+| Stake | What goes wrong today |
+| --- | --- |
+| **Revenue** | Routes are supported without a quantified hotel return; incentives cannot be weighed against guest-nights |
+| **Capacity** | Rooms, staff and events are planned against demand that a schedule change has already moved |
+| **Early warning** | A winter frequency cut shows up in hotel figures months late, after the response window has closed |
+| **Shared language** | Aviation talks in seats and frequencies, hospitality in guests and nights; with no conversion, the two cannot trade off |
+
+## The hidden data catch
+
+The two datasets define **“country” differently**. In the flight data it is **where the flight departed**; in the hotel data it is **the guest's nationality**. An Indian traveller connecting through Doha shows up as **Qatar** supply and **India** demand. A naive join quietly assigns hotel guests to the wrong countries. We measured that effect (section 4) and designed the product around it.
+
+<!-- PAGE BREAK -->
+
+# 4. Our solution — a detailed proposal
+
+## Layer 1: a transparent parametric chain
+
+| Stage | How it is computed | Status |
+| --- | --- | --- |
+| **Seats** | Scheduled capacity per route and month | Measured |
+| **Passengers (PAX)** | Seats × load factor | Measured |
+| **Point-to-point (P2P)** | PAX minus transfer and transit passengers | Measured |
+| **New hotel arrivals** | P2P × market capture rate × seasonality | Estimated (global capture 0.391) |
+| **Guest-nights** | New arrivals × average length of stay | Estimated (ALOS 3.60 nights) |
+
+Every ratio is an adjustable lever, and every stage can be inspected in the app. **Why P2P and not total passengers:** on 1,405 matched market-months, P2P explains hotel demand better (**R² 0.877 vs 0.863**, tighter error). Transfer passengers never leave the airport.
+
+## Layer 2: a learned conversion (the hybrid)
+
+The first three stages are exact arithmetic, so there is nothing to learn there. The **only** step that we replace is the fixed capture rate. A **LightGBM Poisson model with log(P2P) as its exposure** learns the capture rate for each market and each month.
+
+- **Features** are only those known at prediction time: market, month, trend, seats, load factor, P2P and transfer share, route and airline counts, and **UAE event days** (Eid, Ramadan, National Day, New Year).
+- **No leakage.** No hotel figure, or anything derived from one, is ever used as an input.
+- **Stability.** A five-seed ensemble, single-threaded and deterministic, so every published number reproduces exactly.
+- **Event calendar.** The data pack did not include one, so we rebuilt it from a Hijri calendar conversion. It adds a small but consistent gain (+0.41 pp and +0.25 pp on two independent windows).
+
+| Held-out test (Aug 2025 – Feb 2026) | WMAPE | Aggregate bias | Predicted | Actual |
+| --- | ---: | ---: | ---: | ---: |
+| Seasonal-naive (no flights) | 36.0%* | — | — | — |
+| Parametric chain | 32.77% | +1.14% | 1,610,907 | 1,592,790 |
+| **LightGBM hybrid** | **20.55%** | **−0.14%** | **1,590,506** | 1,592,790 |
+
+<sub>*Seasonal-naive was scored on the earlier Feb – Jul 2025 holdout, where the chain scored 28.4% and the hybrid 21.3%.</sub>
+
+## Which factors move hotel demand most (sensitivity)
+
+Hybrid response, as the change in total guest-nights:
+
+| Lever | Change | Δ guest-nights | Elasticity |
 | --- | ---: | ---: | ---: |
-| Parametric chain | 32.77% | +1.14% | 1,610,907 |
-| **LightGBM hybrid** | **20.55%** | **−0.14%** | **1,590,506** |
-| Actual | — | — | 1,592,790 |
+| Capture rate (post-model dial) | +10% | +10.0% | 1.00 |
+| Average length of stay | +5% | +5.0% | 1.00 |
+| **Seats** | +10% | **+5.8%** | **0.58** |
+| Load factor | +5% | +2.4% | 0.48 |
+| P2P share | +5% | +2.4% | 0.48 |
 
-The five-seed range is **20.30–20.85%**. Guest-nights reach **20.8% WMAPE** on the T4 holdout with a learned ALOS; T5 guest-nights cannot be scored because the test pack omits Guests.
+**The planning insight.** Adding seats does not add hotel guests one-for-one. The model shows **diminishing returns to capacity**, consistent with the 0.44 elasticity in the econometric test. Conversion (who arrives, and whether they stay) moves the number more than raw seat count. We also ran a global Sobol sensitivity analysis (SALib) on the chain.
 
-<!-- PAGE BREAK -->
+## The data catch, solved honestly
 
-# Product & results: from “what if?” to a comparable number
+If flight and hotel “country” matched, no market could have more hotel guests than terminating passengers. **Five markets do**: China has a capture rate of 5.85, the US 1.99 and Russia 1.53, which means about 903,000 guests were filed against the wrong origin. The data pack cannot correct this, because it has no residence field. The errors do **cancel in the national total**, which is why the aggregate is accurate to 0.14%. **Our design response:**
 
-## The simulator answers the brief’s questions directly
-
-- **New route / new country** — modelled on a chosen analog market and labelled as an estimate
-- **Frequency, seats, aircraft** — signed seat edits with start/end months, plus flight↔seat calculators
-- **Load factor** — global or per-market fill-rate dials
-- **Seasonal mix** — per-market seat multipliers or winter-only route edits
-
-Every scenario is scored by the hybrid and the chain against a no-change baseline: horizon Δ guest-nights and arrivals, monthly and seasonal views, one-at-a-time contribution bars, an auditable chain table, a supply-side-only market breakdown, a route explorer and a save/compare library.
-
-### The result
-
-On the competition test window the hybrid cuts New Arrivals WMAPE by **12.21 percentage points** against the stronger, capture-capped chain, with aggregate prediction within **0.14%** of actual.
-
-### Decision boundary
-
-**Compare scenarios on the aggregate; treat market levels as supply-side-only.** Capture exceeds 1.0 in five joined markets — the departure-country/nationality mismatch in plain sight. Occupancy is reported as guest-nights because the pack has no room-capacity data.
+- Lead with aggregate results.
+- Label market views *supply-side-only*.
+- Treat new origins as clearly labelled **analog estimates**.
 
 <!-- PAGE BREAK -->
 
-# Future 1: make market attribution decision-grade
+# 5. System design
 
-## Resolve the join before making market-level promises
+## How the pieces fit
 
-**Data work**
+```
+   ┌──────────────────────────────────────────────────────────────┐
+   │  1. DATA            Competition pack                         │
+   │     flights by route & date · hotel arrivals & nights        │
+   │     → loader repairs + integrity audit (117,608 flight rows) │
+   └──────────────────────────────┬───────────────────────────────┘
+                                  ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  2. FEATURES        Matched market × month panel             │
+   │     supply ratios · routes · airlines · UAE event calendar   │
+   │     1,405 market-months · 33 markets · horizon to 2028-12    │
+   └──────────────────────────────┬───────────────────────────────┘
+                                  ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  3. MODEL           One canonical model                      │
+   │     Seats → PAX → P2P   (exact, parametric)                  │
+   │     P2P → New Arrivals  (LightGBM Poisson, 5 seeds)          │
+   │     → Guest-nights      (length of stay)                     │
+   └──────────────────────────────┬───────────────────────────────┘
+                                  ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  4. SCENARIO ENGINE                                          │
+   │     user edits → validate → rewrite supply → forward-project │
+   │     → score hybrid + chain → Δ vs no-change baseline         │
+   └───────────────┬──────────────────────────────┬───────────────┘
+                   ▼                              ▼
+   ┌──────────────────────────────┐  ┌────────────────────────────┐
+   │  5a. SIMULATOR APP           │  │  5b. CHATBOT AGENT         │
+   │  builder · results · routes  │  │  plain-language questions  │
+   │  validation · library        │  │  4 tools → the same model  │
+   └──────────────────────────────┘  └────────────────────────────┘
+```
 
-- Link flights to passenger residence/nationality or true embarkation market
-- Align the flight and hotel market definitions before fitting market capture
-- Validate the mapping against SCAD/official embarkation totals
-- Keep hotel-only origins visible as a residual until their supply is measured
+## Where each layer lives
 
-**Model work**
+| Layer | Module | Key design choice |
+| --- | --- | --- |
+| Data | `pipeline/competition/` | One repair-aware loader; accounting identities checked on every row |
+| Features | `pipeline/hybrid.py`, `pipeline/calendar_events.py` | Only features known at prediction time; event days computed, not hand-typed |
+| Model | `pipeline/hybrid.py` | Notebook, app and chatbot share one module, so their numbers never diverge |
+| Engine | `pipeline/simulator.py` | Guardrails in the API: invalid markets, zeroed levers and out-of-horizon dates are rejected |
+| Apps | `app/simulator.py`, `app/pages/chatbot.py` | The fitted model is saved once and loads in seconds; no raw data is needed at runtime |
 
-- Re-estimate capture and ALOS on a validated market key
-- Re-run the same held-out tests and report market-level error only after validation
-- Extend source-market holiday coverage and refresh the event calendar
+## What happens when a planner moves a lever
 
-**Gate to proceed:** market capture and allocation reconcile with independent evidence; any residual is explicit, never synthetic.
+1. **Edit.** For example: *+600 seats/week, Manchester, Nov 2026 – Oct 2027*.
+2. **Rewrite supply.** The edit changes seats on that route. PAX and P2P follow, using the route's observed load factor and P2P share.
+3. **Rebuild features.** Supply ratios and route counts update, so the model responds non-linearly.
+4. **Score.** The hybrid and the chain both predict new arrivals and guest-nights for every month.
+5. **Compare.** Δ against the no-change baseline, broken down by month, season, market and individual change.
 
 <!-- PAGE BREAK -->
 
-# Future 2: turn the prototype into a planning workflow
+# 6. Intended impact
 
-### From one-off scenarios to repeatable planning
+## The brief's own questions, answered by the prototype
 
-- Ingest forward route schedules and airline capacity proposals as scenario inputs
-- Expand outcomes from arrivals and guest-nights to occupancy and hotel capacity once room data exists
-- Add uncertainty ranges, model monitoring and scheduled back-tests as new actuals arrive
-- Move saved scenarios to durable shared storage for team review and audit
-- Pilot one route or seasonal decision; compare forecasts with subsequent hotel results
+| Question | Prototype answer |
+| --- | --- |
+| *How many extra hotel nights would a new twice-weekly flight generate?* | **≈ +40,000 guest-nights / +8,200 arrivals** over 12 months (600 seats/week, modelled on UK-market behaviour) |
+| *How much would winter hotel demand suffer if an airline cut flights?* | **≈ −55,000 guest-nights** (−1.5% of national winter demand) for 7 fewer weekly London flights, Nov–Feb |
+| *Which countries bring the most hotel guests per available seat?* | A live ranking in **Route insights**: guests per 1,000 seats, capture and length of stay per market |
 
-### Practical rollout
+## For DCT planners
 
-1. Validate market mapping and pick a pilot decision
-2. Agree data owners, refresh cadence and forecast horizon
-3. Review scenarios with aviation and hotel planners
-4. Measure accuracy, usefulness and residual coverage before expanding
+- **Seconds, not spreadsheets.** A route proposal becomes a one-row scenario with a quantified hotel return, before the negotiation rather than after.
+- **Compare before committing.** Saved scenarios line up side by side, so incentive packages can be weighed against guest-nights.
+- **Know which lever to pull.** Contribution bars rank each change. The sensitivity results show that conversion and length of stay move demand more than raw seats.
+- **Earlier warning.** A schedule cut feeds straight into the expected winter guest-nights, while there is still time to respond with marketing, events or other carriers.
+
+## For the organisation
+
+- **Usable today at the national level.** The national total is within 0.14% on unseen months.
+- **A shared language.** Aviation and hospitality teams read the same number, produced by the same auditable chain.
+- **Institutional memory.** Every scenario is saved with its inputs and outputs, and every model decision is logged with its reason.
+
+## For the visitor economy
+
+Better-aligned flights and hotels mean fewer empty rooms after supply shocks and fewer turned-away guests at peaks. Abu Dhabi can also give airlines a faster, evidence-based answer when they ask the destination to support a new route.
 
 <!-- PAGE BREAK -->
 
-# Thank you
+# 7. Feasibility and real-world implementation
+
+## It runs today, on modest infrastructure
+
+| Dimension | Reality |
+| --- | --- |
+| **Data** | Runs on the competition pack alone; no external feeds are required |
+| **Compute** | Trains in about 1–2 minutes on a laptop CPU; no GPU; a light energy footprint |
+| **Serving** | One saved model file; Streamlit on a small VM or Streamlit Community Cloud (private) |
+| **Privacy** | Aggregated data only; no passenger-level records; the licensed pack never leaves the training environment |
+| **Chatbot** | One API key (OpenRouter), with a configurable model; the default is low-cost |
+
+## Rollout plan
+
+| Phase | Timeline | Goal |
+| --- | --- | --- |
+| **Pilot** | Months 0–3 | One planning team; real route and seasonal questions; national-level outputs only |
+| **Integrate** | Months 3–6 | Feed forward airline schedules automatically; quarterly re-fit with back-test before publishing |
+| **Extend** | Months 6–12 | Add residence/nationality and room-capacity data, to unlock market-level and occupancy outputs |
+
+## What would make it better
+
+- **Forward airline schedules**, so the baseline after Feb 2026 becomes a real forecast instead of last year held forward.
+- **Passenger residence or nationality on the flight side**, which fixes the market-attribution problem directly.
+- **Hotel room capacity**, so winter impact is expressed as occupancy points as well as guest-nights.
+- **Source-market public holidays** (India, Egypt, Saudi Arabia, the UK and others), extending the event calendar.
+
+## Risks and how we manage them
+
+| Risk | Response |
+| --- | --- |
+| Market attribution is wrong in the source data | National-level outputs first; market views labelled; attribution fix is milestone one |
+| No observed data after Feb 2026 | Held-forward baseline, labelled observed / projected / scenario on every row |
+| Model drift as networks change | Scheduled back-tests; a pinned replay of the test window on every release |
+| Planners distrust black boxes | Explainable chain beside every ML answer; caveats inside the product; chatbot for non-analysts |
+
+<!-- PAGE BREAK -->
+
+# 8. Testing and demonstration
+
+## Already validated
+
+| Test | Result |
+| --- | --- |
+| Held-out test window (Aug 2025 – Feb 2026, 231 market-months) | Hybrid **20.55%** vs chain 32.77% WMAPE; bias **−0.14%**; five-seed range 20.30–20.85% |
+| Leave-tail holdout (Feb – Jul 2025, 198 market-months) | New arrivals **21.3%** (chain 28.4%, seasonal-naive 36.0%); guest-nights **20.8%** |
+| Data integrity | PAX = P2P + transfer + transit, and load factor = PAX / seats, hold on all 117,608 rows |
+| Reproducibility | Deterministic seeds; pinned assertions fail loudly if any published number moves; a fresh process reproduces the test window from the saved model |
+
+## If shortlisted: a 15-minute live demonstration
+
+1. **Trust first.** Open the Validation tab and replay the held-out window live: predicted vs actual, national total within 0.14%.
+2. **The judges' question.** Take a route question from the panel and build it in the scenario builder in under a minute.
+3. **Explain the answer.** Monthly and seasonal views, contribution bars, and the chain table showing each stage's arithmetic.
+4. **Same question, plain language.** Ask the chatbot; show its tool calls and the identical number.
+5. **Limits, unprompted.** Show the market-attribution warning and explain what data would remove it.
+
+## The 1–2 minute submission video
+
+| Time | Shot |
+| --- | --- |
+| 0:00–0:15 | The problem: two plans, no link; the five questions |
+| 0:15–0:35 | The chain and the hybrid, with the held-out accuracy result |
+| 0:35–1:15 | Live: add a twice-weekly route → +40k guest-nights; cut winter flights → −55k |
+| 1:15–1:35 | The chatbot answers the same question in plain language |
+| 1:35–1:50 | Impact and next step |
+
+## Pilot success criteria
+
+- A planner builds a credible scenario in **under 3 minutes** with no training.
+- **Back-test:** re-run a past route change and compare the prediction with what happened.
+- **Comprehension:** hotel planners read market views correctly given their labels.
+- **Grounding:** the chatbot never states a figure that its tools did not return, even under pressure.
+
+<!-- PAGE BREAK -->
+
+# 9. Visuals, prototype and supporting materials
+
+## The simulator: Results tab (mock-up of the live screen)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Flight → Hotel Demand Simulator                                          │
+├─────────────┬────────────────────────────────────────────────────────────┤
+│ GLOBAL      │ [Builder] [Results] [Route insights] [Validation] [Library]│
+│ LEVERS      │                                                            │
+│ Seats  1.00 │  Δ Guest-nights        Δ New arrivals                      │
+│ ──●──────── │  +39,945  ▲            +8,178  ▲                           │
+│ LF     1.00 │                                                            │
+│ ───●─────── │  Monthly guest-nights: baseline vs scenario                │
+│ P2P    1.00 │   ▁▂▃▅▇▆▅▃▂▂▃▅▇█▆▅  — baseline   ━ scenario                │
+│ ───●─────── │                                                            │
+│             │  Contribution by change                                    │
+│ ▸ Advanced  │   Manchester +600/wk  ████████████████  +39.9k             │
+│   capture   │                                                            │
+│   ALOS      │  Chain stages   Seats → PAX → P2P → Arrivals → Nights      │
+│   season    │  Market breakdown  ⚠ supply-side-only                      │
+└─────────────┴────────────────────────────────────────────────────────────┘
+```
+
+## The chatbot (mock-up of the live screen)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Flight → Hotel Chatbot                                                   │
+│                                                                          │
+│ 👤 What if Etihad cuts 7 weekly London flights this winter?              │
+│                                                                          │
+│ ▸ tool: get_route_supply(market="UNITED KINGDOM")                        │
+│ ▸ tool: run_scenario(routes=[London, Etihad, −2,716 seats/wk,            │
+│                              2026-11 → 2027-02])                         │
+│                                                                          │
+│ 🤖 About −55,000 guest-nights over Nov–Feb, roughly 1.5% of national     │
+│    winter demand. The national figure is reliable; the UK-market split   │
+│    is supply-side-only, because flight “country” is the departure        │
+│    point, not guest nationality.                                         │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+## What each screen shows
+
+| Tab | What a planner sees |
+| --- | --- |
+| **Scenario builder** | Route edit table (signed seats/week, start and end months, analog origin label); per-market seat and load-factor multipliers; flights-to-seats calculators; a recipe for each of the brief's five questions |
+| **Results** | Headline Δ; monthly and seasonal baseline-vs-scenario charts; chain-stage table; one-at-a-time contribution bars; market breakdown |
+| **Route insights** | Markets ranked by hotel guests per 1,000 seats; current weekly supply by route, city and airline |
+| **Validation & caveats** | Live replay of the held-out window; what the model can and cannot say |
+| **Scenario library** | Save, download and compare scenarios side by side |
+
+## Supporting materials
+
+| Material | Location |
+| --- | --- |
+| Methods, results, decision log, limitations | `docs/METHODS.md` |
+| End-to-end notebook (chain + hybrid, every published number) | `notebooks/hybrid_layer.py` |
+| App and chatbot guide, deployment notes | `app/README.md` |
+| Setup and project map | `README.md` |
+| Organisers' brief | `docs/competition-brief.md` |
+
+<!-- PAGE BREAK -->
+
+# 10. Thank you
 
 ## Make flight and hotel planning one conversation
 
 **ATRC Flight-to-Hotel Demand Simulator**  
-Transparent assumptions · Held-out validation · Interactive scenarios
+Transparent chain · Learned conversion · Held-out validation · Interactive scenarios · Plain-language access
 
-### The next step
+### Our ask
 
-Pilot the aggregate simulator on one route or seasonal planning question — and validate the market link before relying on market-level recommendations.
+Pilot the simulator with one DCT planning team on a real route or seasonal decision. Pair it with residence data from the airport or the airlines, to unlock trustworthy market-level answers on top of a model that already gets the national total right to within a fraction of a percent.
 
-*Resolving the departure-country/nationality join is the single most valuable next milestone: it unlocks trustworthy origin-specific planning on top of a model that already predicts the national total within a fraction of a percent.*
+### Key numbers at a glance
+
+| Metric | Value |
+| --- | ---: |
+| Held-out new-arrivals WMAPE (hybrid) | **20.55%** |
+| Same, parametric chain | 32.77% |
+| National-total bias | **−0.14%** |
+| Five-seed WMAPE range | 20.30–20.85% |
+| Guest-nights WMAPE (holdout) | 20.8% |
+| Seat elasticity of guest-nights | 0.58 |
+| Training panel | 1,405 market-months · 33 markets · 43 months |
+| Flight records audited | 117,608 |
+| Scenario horizon | through Dec 2028 |
