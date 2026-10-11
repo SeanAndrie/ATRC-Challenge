@@ -130,7 +130,20 @@ Hybrid response, as the change in total guest-nights:
 | Load factor | +5% | +2.1% | 0.42 |
 | P2P share | +5% | +2.4% | 0.47 |
 
-**The planning insight.** Adding seats does not add hotel guests one-for-one. The model shows **diminishing returns to capacity**, consistent with the 0.44 elasticity in the econometric test. Conversion (who arrives, and whether they stay) moves the number more than raw seat count. We also ran a global Sobol sensitivity analysis (SALib) on the chain.
+**The planning insight.** Adding seats does not add hotel guests one-for-one. The model shows **diminishing returns to capacity**, consistent with the 0.44 elasticity in the econometric test. Conversion (who arrives, and whether they stay) moves the number more than raw seat count.
+
+**What actually moves demand.** Equal ±10% shocks show what a planner *can* move. We also measured how far each ratio really moved month to month in 2022–2025, then ran a global Sobol analysis (SALib) under both sets of ranges:
+
+| Lever | Share of variance, allowed ranges | Share of variance, measured swings |
+| --- | ---: | ---: |
+| **Hotel capture rate** | **51%** | **62%** |
+| Transfer share (P2P) | 6% | **14%** |
+| Load factor | 6% | 7% |
+| Length of stay | 6% | 7% |
+| Seats / frequency | 23% | 5% |
+| Season | 6% | 3% |
+
+Both views agree that **who becomes a hotel guest** dominates. Real seat supply only wobbles about ±9% month to month, so in practice transfer share matters more than capacity.
 
 ## The data catch, solved honestly
 
@@ -353,7 +366,7 @@ Better-aligned flights and hotels mean fewer empty rooms after supply shocks and
 | **New route** | Any country, or a new one priced on an analog; flights, aircraft and dates; guest-nights, arrivals and yield per seat; a ranking of all 33 origins for the same service |
 | **Winter flight cut** | Pick a route and the flights cut; guest-nights lost, share of the season's demand, baseline vs scenario, and an indicative occupancy change |
 | **Guests per seat** | Ranking by hotel arrivals or guest-nights per 1,000 seats; conversion vs length of stay; month-by-market heatmap |
-| **Scenario lab** | Network levers, route changes and seasonal mix shifts combined; contribution by change; ±10% sensitivity tornado; save, compare and download scenarios |
+| **Scenario lab** | Network levers, route changes and seasonal mix shifts combined; contribution by change; sensitivity three ways (equal ±10% shock, measured real-world swings, Sobol variance shares); save, compare and download scenarios |
 | **Ask the model** | Plain-language questions, an inline chart per answer, and every model call shown |
 | **Validation** | Hybrid vs fixed-ratio chain vs actual on the held-out window, by month and by market-month; what the model can and cannot say |
 

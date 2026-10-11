@@ -136,17 +136,33 @@ def heatmap(pivot: pd.DataFrame, title: str = "Hotel arrivals per 1,000 seats") 
     return _layout(fig, height=max(360, 20 * len(pivot) + 60))
 
 
-def tornado(df: pd.DataFrame, labels: dict[str, str]) -> go.Figure:
+def tornado(df: pd.DataFrame, labels: dict[str, str], low_name: str = "−10%",
+            high_name: str = "+10%") -> go.Figure:
     """Each lever moved down (red) and up (blue) on its own."""
     names = [labels.get(lv, lv) for lv in df["lever"]]
     fig = go.Figure()
-    fig.add_bar(y=names, x=df["low"], orientation="h", name="−10%", marker_color=LOSS,
-                marker_cornerradius=4, hovertemplate="%{y} −10%: %{x:+,.0f}<extra></extra>")
-    fig.add_bar(y=names, x=df["high"], orientation="h", name="+10%", marker_color=GAIN,
-                marker_cornerradius=4, hovertemplate="%{y} +10%: %{x:+,.0f}<extra></extra>")
+    fig.add_bar(y=names, x=df["low"], orientation="h", name=low_name, marker_color=LOSS,
+                marker_cornerradius=4, hovertemplate="%{y}: %{x:+,.0f}<extra></extra>")
+    fig.add_bar(y=names, x=df["high"], orientation="h", name=high_name, marker_color=GAIN,
+                marker_cornerradius=4, hovertemplate="%{y}: %{x:+,.0f}<extra></extra>")
     fig.add_vline(x=0, line_width=1, line_color=AXIS)
     return _layout(fig, height=320, barmode="overlay", bargap=0.35,
                    xaxis_title="Δ guest-nights over the next 12 months")
+
+
+def variance_share(df: pd.DataFrame, labels: dict[str, str]) -> go.Figure:
+    """Sobol total-order share per lever: allowed ranges (grey) vs measured (blue)."""
+    names = [labels.get(lv, lv) for lv in df["lever"]]
+    fig = go.Figure()
+    fig.add_bar(y=names, x=df["apriori"], orientation="h", name="Ranges the simulator allows",
+                marker_color=BASE, marker_cornerradius=4,
+                hovertemplate="%{y}: %{x:.0%}<extra></extra>")
+    fig.add_bar(y=names, x=df["measured"], orientation="h", name="Swings measured 2022–2025",
+                marker_color=BLUE, marker_cornerradius=4,
+                hovertemplate="%{y}: %{x:.0%}<extra></extra>")
+    fig.update_xaxes(tickformat=".0%")
+    return _layout(fig, height=340, barmode="group", bargap=0.3, bargroupgap=0.1,
+                   xaxis_title="Share of guest-night variance (Sobol total order)")
 
 
 def contribution(df: pd.DataFrame) -> go.Figure:

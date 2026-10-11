@@ -6,3 +6,4 @@ plotly>=7.1,<8
 openpyxl>=3.1,<4
 pyarrow>=25,<26
 requests>=2.34.2
+salib>=1.6,<2

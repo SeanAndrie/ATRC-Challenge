@@ -110,7 +110,7 @@ weight. The seven success criteria map to the work as follows:
 
 | # | Criterion | Where it is addressed |
 | --- | --- | --- |
-| 01 | A working simulator, not a static report | `notebooks/hybrid_layer.py` Part A (levers + charts), `app/simulator.py` (stub, [open work](#open-work-and-next-steps)) |
+| 01 | A working simulator, not a static report | `notebooks/hybrid_layer.py` Part A (levers + charts), the Streamlit app `app/streamlit_app.py` (see `app/README.md`) |
 | 02 | Transparent conversion chain, assumptions adjustable | [Phase 3](#phase-3--parametric-layer) |
 | 03 | Validation against history with an honest error metric | T3/T4/T5, WMAPE on holdout and test window |
 | 04 | Sensitivity analysis | T6 a-priori Sobol + empirically measured lever spreads (`pipeline/sensitivity.py`) |
@@ -161,7 +161,7 @@ pipeline/tests/    test_sensitivity.py (sensitivity-module check)
 notebooks/         four marimo notebooks
 docs/              METHODS.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
-app/               Streamlit simulator (built) + chatbot page
+app/               Streamlit app (question pages, scenario lab, chatbot) + model build script
 outputs/           generated reports + scratch (gitignored)
 ```
 
@@ -831,16 +831,8 @@ uv sync
 
 ```
 .venv/bin/python pipeline/dct/dct_validate.py          # 2017 reconciles to 0.026%
-.venv/bin/python pipeline/tests/test_market_link.py
-.venv/bin/python pipeline/tests/test_aggregate_link.py
-.venv/bin/python pipeline/tests/test_retarget_international.py
-.venv/bin/python pipeline/tests/test_p2p_vs_pax.py
-.venv/bin/python pipeline/tests/test_calendar_events.py
-.venv/bin/python pipeline/tests/test_market_attribution.py   # capture > 1.0 in 5 markets; see METHODS 4.5
-.venv/bin/python pipeline/tests/test_market_origin_validation.py  # pack region mix vs SCAD embarkation mix; see METHODS 4.5
-.venv/bin/python pipeline/tests/test_simulator_package.py    # packaging gate; re-fits the simulator, writes no report
 .venv/bin/python pipeline/tests/test_sensitivity.py         # empirical lever spreads; synthetic panel, no report
-.venv/bin/python pipeline/tests/crosscheck_markets.py
+.venv/bin/python -m app.build_model                          # re-fits the simulator; prints the pinned T5/T4 numbers
 cd data/processed && md5sum -c checksums.md5
 ```
 
@@ -927,14 +919,29 @@ column (the attr is lost by `groupby`/serialization; the column survives), and
 the UI must not present market levels as measured; the aggregate views are the
 defaults for a reason.
 
-The Streamlit front end (`app/simulator.py`) is built: a scenario builder for
-route/frequency/seat/load-factor/market-mix changes, baseline-vs-scenario
-monthly and seasonal views, one-at-a-time contribution bars (the brief's
-sensitivity question), a supply-side-only market table, the route explorer and
-market ranking, a live T5 validation replay, and a save/compare scenario
-library under `outputs/sessions/`. New origins are analog estimates and are
-labelled as such throughout; occupancy is not computed because the pack has no
-room-capacity data, so winter impact is reported in guest-nights.
+The Streamlit front end (`app/streamlit_app.py`) is built on this API. It has:
+- one page per headline question in the brief: a new route, a winter flight cut,
+  and guests per available seat;
+- a scenario lab: network levers, route changes, seasonal mix shifts,
+  one-at-a-time contribution bars, a save/compare library, and both sensitivity
+  views of §3.4 (an equal ±10% shock, the measured swings scored by the hybrid,
+  and the Sobol variance shares);
+- a validation page built from the precomputed T5/T4 back-tests;
+- an OpenRouter chatbot whose tools call the same scenario builders.
+
+`python -m app.build_model` writes the artifacts the app serves
+(`outputs/models/simulator_full.pkl`, `validation.parquet`).
+
+Two app-level choices:
+- **Capacity-only pricing of new routes.** A new service's seats join the
+  market's busiest existing route by default. The model's `routes`/`airlines`
+  counts mostly encode market size, and bumping them for one service inflates the
+  estimate several-fold. The route-count variant is an opt-in toggle.
+- **Indicative occupancy.** Occupancy is shown as a conversion of the
+  guest-night delta, using the published room stock (`dct_hotel_supply.csv`) and
+  a stated guests-per-room assumption. The pack itself has no room-capacity data.
+
+New origins are analog estimates and are labelled as such throughout.
 
 ---
 
@@ -947,7 +954,8 @@ room-capacity data, so winter impact is reported in guest-nights.
 `monthly_summary.csv`, `markets_by_month.csv`, `aircraft_types.csv`,
 `capture_rate.csv` (plus `checksums.md5`).
 
-**Notebooks (marimo, three):** `hybrid_layer.py` (the deliverable — Part A the
+**Notebooks (marimo, four):** `sensitivity_empirical.py` (§3.4's measured-spread
+view), `hybrid_layer.py` (the deliverable — Part A the
 parametric chain, Part B the hybrid LightGBM layer, Part C the shared pin block),
 `linkage_study.py` (main public-data analysis, Phase 1 evidence),
 `flight_analysis.py` (read of the OpenSky ADS-B extract, Phase 1 evidence).
@@ -962,16 +970,16 @@ country→region mapping), `pipeline/competition/` (loader + audit),
 `pipeline/hotel_supply.py`, `pipeline/calendar_events.py` (UAE event calendar,
 §4.3), `pipeline/hybrid.py` (canonical chain + LightGBM layer, shared with the
 notebook), `pipeline/simulator.py` (`Scenario`/`Simulator` API for the app),
-`pipeline/paths.py`.
+`pipeline/sensitivity.py` (measured lever spreads + Sobol, §3.4), `pipeline/paths.py`.
 
 **Docs:** [`../README.md`](../README.md) (entry point), this file
 ([`METHODS.md`](METHODS.md)), and
 [`competition-brief.md`](competition-brief.md) (supplied by the organisers).
 
-**App:** `app/simulator.py` is the built Streamlit simulator (scenario
-builder, baseline-vs-scenario views, contribution bars, route insights, T5
-replay, save/compare library), plus a `/chatbot` page — an OpenRouter-backed
-agent whose tools call the same packaged model. See `app/README.md`.
+**App:** `app/streamlit_app.py` is the entry point. `app/core.py` holds the
+shared scenario logic, `app/views/` holds one file per page, `app/agent.py` is
+the OpenRouter chatbot, and `app/build_model.py` builds the served artifacts.
+See `app/README.md`.
 
 ---
 
@@ -993,8 +1001,8 @@ agent whose tools call the same packaged model. See `app/README.md`.
    `pipeline/hybrid.py` is the canonical model the notebook also delegates to,
    `pipeline/simulator.py` exposes `Scenario`/`Simulator` (six levers, signed
    and dated route edits, fit-on-demand, a `reproduce_competition_window()`
-   replay), and `app/simulator.py` renders by month and season with the market
-   breakdown and `seats_mult` lever explicitly labelled supply-side-only. The
+   replay), and the app in `app/` leads with national totals and labels every
+   market-level view supply-side-only. The
    remaining work is attribution, not UI.
 3. **Measure capture for the 52 air-only origins.** OpenSky data is present in
    `data/raw/opensky/` but unconsumed; this would extend the chain beyond the 33

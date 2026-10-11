@@ -426,6 +426,57 @@ def lever_sensitivity(step: float = 0.10) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("swing").reset_index(drop=True)
 
 
+# pipeline.sensitivity's lever names, in its order, mapped to Scenario fields.
+SENSITIVITY_LEVERS = {
+    "seats / frequency": "seats_mult",
+    "load factor": "lf_mult",
+    "P2P share (transfer/transit)": "p2p_mult",
+    "capture rate": "capture_mult",
+    "ALOS": "alos_mult",
+    "season": "season_mult",
+}
+
+
+@st.cache_data(show_spinner=False)
+def measured_sensitivity() -> pd.DataFrame:
+    """Each lever moved to its measured 16th and 84th percentile, alone.
+
+    The swings come from ``pipeline.sensitivity`` (how far each ratio actually
+    moved month to month in 2022-2025); the scoring is the hybrid model over
+    the forward year, so it is comparable with ``lever_sensitivity``.
+    """
+    from pipeline import sensitivity as S
+
+    sim = get_sim()
+    spread = S.lever_spread_table(sim.panel, sim.params).set_index("lever")
+    rows = []
+    for name, lever in SENSITIVITY_LEVERS.items():
+        q16, q84 = float(spread.at[name, "q16"]), float(spread.at[name, "q84"])
+        lo = summarize(Scenario(**{lever: q16}), FORWARD_YEAR).delta_nights
+        hi = summarize(Scenario(**{lever: q84}), FORWARD_YEAR).delta_nights
+        rows.append({"lever": lever, "q16": q16, "q84": q84, "low": lo, "high": hi, "swing": hi - lo})
+    return pd.DataFrame(rows).sort_values("swing").reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def sobol_views() -> pd.DataFrame | None:
+    """Share of guest-night variance per lever (Sobol total order, parametric chain)
+    under the a-priori ranges and the measured ranges; None without SALib."""
+    try:
+        from pipeline import sensitivity as S
+        import SALib  # noqa: F401
+    except ImportError:
+        return None
+    sim = get_sim()
+    apriori = {name: LEVER_BOUNDS[lever][:2] for name, lever in SENSITIVITY_LEVERS.items()}
+    measured = S.empirical_lever_bounds(sim.panel, sim.params)
+    a = S.sobol_sensitivity(sim.panel, sim.params, apriori).set_index("lever")["ST"]
+    m = S.sobol_sensitivity(sim.panel, sim.params, measured).set_index("lever")["ST"]
+    out = pd.DataFrame({"apriori": a, "measured": m}).reset_index()
+    out["lever"] = out["lever"].map(SENSITIVITY_LEVERS)
+    return out.sort_values("measured").reset_index(drop=True)
+
+
 LEVER_LABELS = {
     "seats_mult": "Seats (capacity)",
     "lf_mult": "Load factor",

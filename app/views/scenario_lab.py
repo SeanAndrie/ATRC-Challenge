@@ -158,13 +158,52 @@ with st.expander("Supply chain and market detail"):
 # --- sensitivity ---------------------------------------------------------------
 st.divider()
 st.subheader("Which levers move hotel demand most?")
-sens = core.lever_sensitivity()
-st.plotly_chart(charts.tornado(sens, core.LEVER_LABELS), width="stretch")
-st.caption(
-    "Each lever moved ±10% on its own over the next 12 months. Capture, stay and seasonality scale "
-    "demand one-for-one. Seats, load factor and transfer share pass through the model, which "
-    "responds less than proportionally: an extra seat does not bring a proportional extra guest."
+t_equal, t_real, t_var = st.tabs(
+    ["Equal ±10% shock", "Realistic swings (measured)", "Share of variance"]
 )
+with t_equal:
+    st.plotly_chart(charts.tornado(core.lever_sensitivity(), core.LEVER_LABELS), width="stretch")
+    st.caption(
+        "Each lever moved ±10% on its own over the next 12 months. Capture, stay and seasonality "
+        "scale demand one-for-one. Seats, load factor and transfer share pass through the model, "
+        "which responds less than proportionally: an extra seat does not bring a proportional "
+        "extra guest."
+    )
+with t_real:
+    real = core.measured_sensitivity()
+    st.plotly_chart(charts.tornado(real, core.LEVER_LABELS, "Low month (16th pct)",
+                                   "High month (84th pct)"), width="stretch")
+    st.caption(
+        "Each lever moved as far as it actually moved in a typical month, 2022–2025: from its "
+        "16th to its 84th percentile, alone, scored over the next 12 months. Real seat supply "
+        "only wobbles about ±9% month to month, while the share of terminating passengers who "
+        "check into hotels swings far more. That share is what moves hotel demand in practice."
+    )
+    st.dataframe(
+        real.assign(lever=real["lever"].map(core.LEVER_LABELS)).iloc[::-1][
+            ["lever", "q16", "q84", "low", "high"]],
+        hide_index=True, width="stretch",
+        column_config={
+            "lever": "Lever",
+            "q16": st.column_config.NumberColumn("Low swing", format="%.3f×"),
+            "q84": st.column_config.NumberColumn("High swing", format="%.3f×"),
+            "low": st.column_config.NumberColumn("Δ guest-nights (low)", format="%+,.0f"),
+            "high": st.column_config.NumberColumn("Δ guest-nights (high)", format="%+,.0f"),
+        },
+    )
+with t_var:
+    var = core.sobol_views()
+    if var is None:
+        st.info("Install SALib to show the variance decomposition.")
+    else:
+        st.plotly_chart(charts.variance_share(var, core.LEVER_LABELS), width="stretch")
+        st.caption(
+            "Sobol analysis on the fixed-ratio chain: how much of the uncertainty in guest-nights "
+            "each lever accounts for. Grey uses the ranges the simulator lets you set; blue uses the "
+            "swings actually measured. Both agree the hotel capture rate dominates. They disagree on "
+            "second place: seats under the allowed ranges, transfer share under measured ones, "
+            "because real seat supply moves less than planners can test."
+        )
 
 # --- library -----------------------------------------------------------------
 st.divider()
