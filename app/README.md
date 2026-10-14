@@ -17,8 +17,8 @@ From the repository root, after `uv sync`:
 
 | File | What it holds |
 | --- | --- |
-| `simulator_full.pkl` | the fitted simulator (scenario model, back-test model, learned length of stay, supply cache) |
-| `validation.parquet` | held-out predictions vs actuals for the Validation page |
+| `app_simulator.pkl` | the fitted simulator (scenario model, back-test model, learned length of stay, supply cache) |
+| `app_validation.parquet` | held-out predictions vs actuals for the Validation page |
 
 With these two files present, the app starts in about a second and never reads the
 licensed pack. Without the pickle, the app fits from the pack on first start (about
@@ -28,11 +28,8 @@ licensed pack. Without the pickle, the app fits from the pack on first start (ab
 
 | Page | Answers |
 | --- | --- |
-| **Overview** | What the model does and how accurate it is. A Sankey diagram follows a year of seats to hotel arrivals. Shows live default answers to the three questions. |
-| **New route** | *How many extra hotel nights would a new twice-weekly flight from a given country generate?* Pick a country (or a new one priced on an analog market), flights per week, aircraft, start month and duration. Shows guest-nights, arrivals and yield per seat, a monthly chart, and a funnel of where the seats go. A toggle ranks all 33 origins for the same service. |
-| **Winter flight cut** | *How much would winter hotel occupancy suffer if an airline reduced its flights?* Pick a route and the number of weekly flights cut. Shows guest-nights lost, the share of the season's demand, baseline vs scenario, and an **indicative** occupancy change. |
-| **Guests per seat** | *Which countries bring in the most hotel guests per available seat?* Measured ranking, conversion vs length-of-stay bubble chart, month-by-market heatmap, and a table. |
-| **Scenario lab** | Combines network levers, route changes and seasonal market-mix shifts. Shows each change's contribution, sensitivity three ways ("which factors move the number most"): an equal ±10% shock, each lever moved by its measured real-world swing, and Sobol variance shares from `pipeline/sensitivity.py`, and a session scenario library with compare and download. |
+| **Overview** | What the model does and how accurate it is. A Sankey diagram follows a year of seats to hotel arrivals, with links to the scenario lab and the chatbot. |
+| **Scenario lab** | Answers the brief's what-if questions: new routes (including a new country priced on an analog market), more or fewer weekly flights over any window, network levers and seasonal market-mix shifts. Shows each change's contribution, sensitivity three ways ("which factors move the number most"): an equal ±10% shock, each lever moved by its measured real-world swing, and Sobol variance shares from `pipeline/sensitivity.py`, and a session scenario library with compare and download. |
 | **Ask the model** | Chatbot for the brief's five what-if questions, with suggested prompts, an inline chart per scenario, and every model call shown. |
 | **Validation** | Held-out back-test (Aug 2025 – Feb 2026): hybrid vs fixed-ratio chain vs actual, by month and by market-month, plus what the model can and cannot say. |
 
@@ -108,8 +105,7 @@ Saved scenarios live in the browser session; use the download button to keep the
   terminating passengers (marked ⚠).
 - **New flights are priced on capacity.** Added seats join the market's busiest
   existing route. The model's route and airline counts mostly encode market size, and
-  counting one service as a new route inflates estimates several-fold. That variant
-  is an opt-in toggle on the New route page.
+  counting one service as a new route inflates estimates several-fold.
 - **New countries are analog estimates.** The model knows 33 markets, so a country
   that never flew here is priced on a market you choose, and labelled.
 - **After 2026-02 the baseline repeats last year's schedule.** Results are the

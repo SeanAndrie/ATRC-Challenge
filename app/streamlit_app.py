@@ -36,11 +36,6 @@ except core.ModelUnavailable as exc:
 VIEWS = Path(__file__).parent / "views"
 pages = {
     "": [st.Page(VIEWS / "overview.py", title="Overview", icon=":material/flight_land:", default=True)],
-    "The three questions": [
-        st.Page(VIEWS / "new_route.py", title="New route", icon=":material/add_road:"),
-        st.Page(VIEWS / "winter_cut.py", title="Winter flight cut", icon=":material/ac_unit:"),
-        st.Page(VIEWS / "market_yield.py", title="Guests per seat", icon=":material/leaderboard:"),
-    ],
     "Explore": [
         st.Page(VIEWS / "scenario_lab.py", title="Scenario lab", icon=":material/tune:"),
         st.Page(VIEWS / "assistant.py", title="Ask the model", icon=":material/forum:"),

@@ -6,9 +6,9 @@ Run once from the repository root (needs ``data/raw/competition/``)::
 
 Writes two files to ``outputs/models/`` (gitignored):
 
-* ``simulator_full.pkl`` -- the fitted simulator, including the competition
+* ``app_simulator.pkl`` -- the fitted simulator, including the competition
   window, so scenarios and the back-test replay load instantly;
-* ``validation.parquet`` -- the T5 back-test (hybrid and parametric chain vs
+* ``app_validation.parquet`` -- the T5 back-test (hybrid and parametric chain vs
   actual New Arrivals) and the T4 guest-nights holdout, for the Validation page.
 
 A deployed app needs only these two files; it never reads the licensed pack.
@@ -25,10 +25,8 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd  # noqa: E402
 
-from pipeline import paths  # noqa: E402
+from app.core import MODEL_PATH, VALIDATION_PATH  # noqa: E402
 from pipeline.simulator import Scenario, Simulator  # noqa: E402
-
-VALIDATION_PATH = paths.MODELS / "validation.parquet"
 
 
 def validation_frame(sim: Simulator) -> pd.DataFrame:
@@ -59,7 +57,7 @@ def main() -> None:
           f"chain {wmape(t5.NewArr, t5.ChainHat):.2f}%")
     print(f"  T4 guest-nights WMAPE {wmape(t4.Guests, t4.GuestNightsHat):.2f}%")
 
-    model_path = sim.save()
+    model_path = sim.save(MODEL_PATH)
     frame.to_parquet(VALIDATION_PATH, index=False)
     print(f"Saved {model_path.relative_to(ROOT)} and {VALIDATION_PATH.relative_to(ROOT)}")
 

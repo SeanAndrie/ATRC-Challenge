@@ -38,7 +38,10 @@ FIRST_FORWARD = "2026-03"
 HORIZON_END = str(COVERED_TO)
 FORWARD_YEAR = ("2026-03", "2027-02")  # the evaluation window for global levers
 WINTER = ("2026-11", "2027-02")
-VALIDATION_PATH = paths.MODELS / "validation.parquet"
+# The app's own artifacts. A distinct model file name keeps other front ends
+# that save to the engine's default (simulator_full.pkl) from overwriting it.
+MODEL_PATH = paths.MODELS / "app_simulator.pkl"
+VALIDATION_PATH = paths.MODELS / "app_validation.parquet"
 
 # Pinned held-out results (T5, 2025-08..2026-02); see docs/METHODS.md §4.2.
 PINNED = {"t5_wmape": 20.55, "t5_bias": -0.14, "chain_wmape": 32.77, "t4_nights_wmape": 20.8}
@@ -60,22 +63,39 @@ class ModelUnavailable(RuntimeError):
     """No saved model and no competition pack to fit one from."""
 
 
-@st.cache_resource(show_spinner="Loading the model…")
-def get_sim() -> Simulator:
-    """The fitted simulator: the saved artifact, else a one-off fit from the pack."""
+def compatible(sim: Simulator) -> bool:
+    """True if a loaded model has what the app needs: the learned length of stay
+    and route supply held forward to the horizon, with its observed/projected flag."""
     try:
-        return Simulator.load()
-    except FileNotFoundError:
+        routes = sim.route_supply()
+        return (
+            sim._alos_boosters is not None
+            and "basis" in routes.columns
+            and routes["ym"].max() >= COVERED_TO
+        )
+    except Exception:
+        return False
+
+
+@st.cache_resource(show_spinner="Loading the model (the first run fits it, about 1–2 minutes)…")
+def get_sim() -> Simulator:
+    """The fitted simulator: the app's saved artifact if it is compatible,
+    otherwise a one-off fit from the pack, saved for next time."""
+    try:
+        sim = Simulator.load(MODEL_PATH)
+        if compatible(sim):
+            return sim
+    except Exception:
         pass
     try:
         sim = Simulator(window="full").fit()
     except Exception as exc:
         raise ModelUnavailable(
-            "No saved model at outputs/models/simulator_full.pkl and the competition "
-            "pack is not available to fit one. Run `python -m app.build_model` where "
-            "the pack is present and ship the outputs/models/ files with the app."
+            f"No usable model at {MODEL_PATH.relative_to(paths.ROOT)} and the competition "
+            "pack is not available to fit one. Run `python -m app.build_model` where the "
+            "pack is present and ship the outputs/models/ files with the app."
         ) from exc
-    sim.save()
+    sim.save(MODEL_PATH)
     return sim
 
 
@@ -279,15 +299,6 @@ def market_yield() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def yield_by_month() -> pd.DataFrame:
-    """Hotel arrivals per 1,000 seats by market x calendar month (pooled years)."""
-    p = get_sim().panel
-    g = p.groupby(["market", "month"])[["NewArr", "Total_Seats"]].sum().reset_index()
-    g["arrivals_per_1000_seats"] = 1000.0 * g["NewArr"] / g["Total_Seats"]
-    return g.pivot(index="market", columns="month", values="arrivals_per_1000_seats")
-
-
-@st.cache_data(show_spinner=False)
 def hotel_rooms() -> tuple[int, str]:
     """Latest published Abu Dhabi room count from the public DCT reports."""
     try:
@@ -400,19 +411,6 @@ def seasonal_mix(shifts: dict[str, float], start: str, end: str) -> tuple[Scenar
                 edits.append(RouteEdit(market=market, city=route["city"], airline=route["airline"],
                                        seats_per_week=delta, started_period=ym, ended_period=ym))
     return Scenario(routes=tuple(edits)), []
-
-
-@st.cache_data(show_spinner=False)
-def origin_sweep(flights_per_week: float, seats_per_flight: float, start: str,
-                 n_months: int, count_as_new_route: bool = False) -> pd.DataFrame:
-    """The same new service scored from every model market."""
-    rows = []
-    for m in markets():
-        sc, _ = new_route(m, flights_per_week, seats_per_flight, start, n_months,
-                          count_as_new_route=count_as_new_route)
-        s = summarize(sc)
-        rows.append({"market": m, "delta_nights": s.delta_nights, "delta_arrivals": s.delta_arrivals})
-    return pd.DataFrame(rows).sort_values("delta_nights", ascending=False).reset_index(drop=True)
 
 
 @st.cache_data(show_spinner=False)

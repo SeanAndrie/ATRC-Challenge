@@ -161,7 +161,7 @@ pipeline/tests/    test_sensitivity.py (sensitivity-module check)
 notebooks/         four marimo notebooks
 docs/              METHODS.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
-app/               Streamlit app (question pages, scenario lab, chatbot) + model build script
+app/               Streamlit app (overview, scenario lab, chatbot, validation) + model build script
 outputs/           generated reports + scratch (gitignored)
 ```
 
@@ -920,8 +920,7 @@ the UI must not present market levels as measured; the aggregate views are the
 defaults for a reason.
 
 The Streamlit front end (`app/streamlit_app.py`) is built on this API. It has:
-- one page per headline question in the brief: a new route, a winter flight cut,
-  and guests per available seat;
+- an overview: headline accuracy and a year of seats followed to hotel arrivals;
 - a scenario lab: network levers, route changes, seasonal mix shifts,
   one-at-a-time contribution bars, a save/compare library, and both sensitivity
   views of §3.4 (an equal ±10% shock, the measured swings scored by the hybrid,
@@ -930,13 +929,13 @@ The Streamlit front end (`app/streamlit_app.py`) is built on this API. It has:
 - an OpenRouter chatbot whose tools call the same scenario builders.
 
 `python -m app.build_model` writes the artifacts the app serves
-(`outputs/models/simulator_full.pkl`, `validation.parquet`).
+(`outputs/models/app_simulator.pkl`, `app_validation.parquet`).
 
 Two app-level choices:
 - **Capacity-only pricing of new routes.** A new service's seats join the
   market's busiest existing route by default. The model's `routes`/`airlines`
   counts mostly encode market size, and bumping them for one service inflates the
-  estimate several-fold. The route-count variant is an opt-in toggle.
+  estimate several-fold.
 - **Indicative occupancy.** Occupancy is shown as a conversion of the
   guest-night delta, using the published room stock (`dct_hotel_supply.csv`) and
   a stated guests-per-room assumption. The pack itself has no room-capacity data.

@@ -22,9 +22,7 @@ ORANGE = "#eb6834"
 GAIN = "#2a78d6"
 LOSS = "#e34948"
 BASE = "#a9a8a1"
-BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
-MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def _layout(fig: go.Figure, height: int = 360, **kw) -> go.Figure:
@@ -69,71 +67,6 @@ def delta_bars(df: pd.DataFrame, x: str = "ym_str", y: str = "delta",
     ))
     fig.add_hline(y=0, line_width=1, line_color=AXIS)
     return _layout(fig, height=height, yaxis_title=y_title, bargap=0.35, showlegend=False)
-
-
-def stage_funnel(stages: dict[str, float]) -> go.Figure:
-    """Where added (or removed) seats end up, stage by stage."""
-    labels = ["Seats", "Passengers", "Terminating passengers", "Hotel arrivals"]
-    keys = ["seats", "passengers", "terminating_passengers", "hotel_arrivals"]
-    vals = [abs(stages[k]) for k in keys]
-    fig = go.Figure(go.Funnel(
-        y=labels, x=vals, textinfo="value+percent initial", texttemplate="%{value:,.0f}  (%{percentInitial:.0%})",
-        marker=dict(color=BLUE_RAMP[2:6]), connector=dict(fillcolor="#eef3fb", line=dict(width=0)),
-        textfont=dict(color="white"), hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
-    ))
-    return _layout(fig, height=280, showlegend=False)
-
-
-def ranking_bar(df: pd.DataFrame, value: str, label: str = "market", highlight: str | None = None,
-                flagged: set[str] | None = None, x_title: str = "", fmt: str = ",.0f",
-                height: int | None = None) -> go.Figure:
-    """Horizontal ranking, largest on top; one bar optionally highlighted."""
-    d = df.iloc[::-1]
-    flagged = flagged or set()
-    colors = [BLUE if (highlight is None or m == highlight) else "#9ec5f4" for m in d[label]]
-    names = [f"{m} ⚠" if m in flagged else m for m in d[label]]
-    fig = go.Figure(go.Bar(
-        x=d[value], y=names, orientation="h", marker_color=colors, marker_cornerradius=4,
-        text=[f"{v:{fmt}}" for v in d[value]], textposition="outside", cliponaxis=False,
-        textfont=dict(color=INK_2), hovertemplate="%{y}: %{x:" + fmt + "}<extra></extra>",
-    ))
-    return _layout(fig, height=height or max(260, 24 * len(d) + 60), xaxis_title=x_title,
-                   showlegend=False, bargap=0.3)
-
-
-def bubble(df: pd.DataFrame) -> go.Figure:
-    """Capture vs length of stay, sized by seats; capture > 1 marks the join defect."""
-    ok = df[df["capture"] <= 1.0]
-    bad = df[df["capture"] > 1.0]
-    size = 12 + 38 * (df["seats"] / df["seats"].max()) ** 0.5
-    fig = go.Figure()
-    for part, color, name in ((ok, BLUE, "Capture ≤ 1"), (bad, ORANGE, "Capture > 1 (join defect)")):
-        fig.add_scatter(
-            x=part["capture"], y=part["alos"], mode="markers+text", name=name,
-            text=part["market"].str.title(), textposition="top center",
-            textfont=dict(size=10, color=INK_2),
-            marker=dict(size=size[part.index], color=color, opacity=0.75,
-                        line=dict(color=SURFACE, width=2)),
-            customdata=part[["seats", "arrivals"]],
-            hovertemplate="%{text}<br>capture %{x:.2f} · stay %{y:.1f} nights"
-                          "<br>seats %{customdata[0]:,.0f}<extra></extra>",
-        )
-    fig.add_vline(x=1.0, line_width=1, line_dash="dot", line_color=AXIS)
-    fig.update_xaxes(type="log")
-    return _layout(fig, height=460, xaxis_title="Hotel arrivals per terminating passenger (log)",
-                   yaxis_title="Average stay (nights)")
-
-
-def heatmap(pivot: pd.DataFrame, title: str = "Hotel arrivals per 1,000 seats") -> go.Figure:
-    fig = go.Figure(go.Heatmap(
-        z=pivot.values, x=[MONTHS[int(m) - 1] for m in pivot.columns], y=pivot.index,
-        colorscale=[[i / (len(BLUE_RAMP) - 1), c] for i, c in enumerate(BLUE_RAMP)],
-        xgap=2, ygap=2, colorbar=dict(title=None, thickness=10, outlinewidth=0),
-        hovertemplate="%{y} · %{x}<br>%{z:,.0f} per 1,000 seats<extra></extra>",
-    ))
-    fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)")
-    fig.update_xaxes(side="top", gridcolor="rgba(0,0,0,0)")
-    return _layout(fig, height=max(360, 20 * len(pivot) + 60))
 
 
 def tornado(df: pd.DataFrame, labels: dict[str, str], low_name: str = "−10%",

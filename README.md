@@ -107,7 +107,7 @@ The parametric chain and the hybrid layer are packaged as an importable API, and
 competition pack), then run the app from the repository root:
 
 ```
-.venv/bin/python -m app.build_model          # writes outputs/models/simulator_full.pkl + validation.parquet
+.venv/bin/python -m app.build_model          # writes outputs/models/app_simulator.pkl + app_validation.parquet
 .venv/bin/streamlit run app/streamlit_app.py
 ```
 
@@ -272,7 +272,7 @@ in sign, small. Source-market public holidays are still not covered; see
 
 | # | Criterion | Where |
 | --- | --- | --- |
-| 01 | Working simulator, not a report | [`app/`](app/README.md) — question pages, scenario lab, sensitivity tornado, chatbot, save/compare library |
+| 01 | Working simulator, not a report | [`app/`](app/README.md) — scenario lab, sensitivity views, chatbot, validation, save/compare library |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
 | 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
 | 04 | Sensitivity analysis | T6 a-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |

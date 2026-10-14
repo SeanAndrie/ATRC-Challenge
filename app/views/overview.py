@@ -1,4 +1,4 @@
-"""Landing page: what the model does, how good it is, and the three answers."""
+"""Landing page: what the model does and how good it is."""
 
 import streamlit as st
 
@@ -46,39 +46,13 @@ st.caption(
     "passengers are residents or visit friends and family."
 )
 
-# --- the three answers -------------------------------------------------------
-st.subheader("The brief's three questions, answered live")
-c1, c2, c3 = st.columns(3)
-
-with c1, st.container(border=True):
-    st.markdown("**A new twice-weekly flight**")
-    sc, _ = core.new_route("INDIA", 2, 290, "2026-11", 12)
-    s = core.summarize(sc)
-    st.metric("Extra guest-nights in its first year", ui.signed(s.delta_nights),
-              f"{ui.signed(s.delta_arrivals)} hotel arrivals", delta_color="off")
-    st.caption("2 × 787-9 a week from India, Nov 2026 – Oct 2027.")
-    st.page_link("views/new_route.py", label="Try any country →", icon=":material/add_road:")
-
-with c2, st.container(border=True):
-    st.markdown("**An airline cuts winter flights**")
-    sc, _ = core.frequency_change("UNITED KINGDOM", -7, *core.WINTER, city="London", airline="Etihad")
-    s = core.summarize(sc)
-    rooms, _src = core.hotel_rooms()
-    occ = core.occupancy_points(s.delta_nights, s.window, rooms, 1.7)
-    st.metric("Guest-nights lost, Nov – Feb", ui.signed(s.delta_nights),
-              f"{s.pct_of_window:+.1f}% of winter demand · ≈{occ:+.1f} occupancy pts",
-              delta_color="off")
-    st.caption("7 fewer London flights a week, winter 2026/27.")
-    st.page_link("views/winter_cut.py", label="Cut any route →", icon=":material/ac_unit:")
-
-with c3, st.container(border=True):
-    st.markdown("**Most hotel guests per seat**")
-    y = core.market_yield()
-    valid = y[y["capture"] <= 1.0].head(3)
-    for r in valid.itertuples():
-        st.markdown(f"{r.market.title()} — **{r.arrivals_per_1000_seats:,.0f}** per 1,000 seats")
-    st.caption("Markets with a consistent flight–hotel link, 2022–2025.")
-    st.page_link("views/market_yield.py", label="See the full ranking →", icon=":material/leaderboard:")
+st.markdown(
+    "**Test a change:** open the **Scenario lab** to add or cut flights, change aircraft size, "
+    "load factor or the seasonal market mix, or **Ask the model** in plain language."
+)
+c1, c2 = st.columns(2)
+c1.page_link("views/scenario_lab.py", label="Scenario lab →", icon=":material/tune:")
+c2.page_link("views/assistant.py", label="Ask the model →", icon=":material/forum:")
 
 with st.expander("How to read these numbers"):
     st.markdown(

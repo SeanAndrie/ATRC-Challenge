@@ -19,7 +19,7 @@ A working decision-support prototype that converts air supply into hotel guest-n
 
 **How well it works.** On a held-out window the model never saw (Aug 2025 – Feb 2026), it predicts new hotel arrivals at **20.55% WMAPE**, against **32.77%** for the parametric chain. Its national total is **within 0.14%** of actual, and five random seeds all land between 20.30% and 20.85%.
 
-**What a planner gets.** A Streamlit app with one page for each of the brief's three headline questions (new route, winter flight cut, guests per seat), plus a scenario lab, a validation page and a **plain-language chatbot**. Every number on every page, and in the chat, comes from the same model. Example answers from the prototype:
+**What a planner gets.** A Streamlit app with a scenario lab for every what-if in the brief (new routes, more or fewer flights, bigger aircraft, fuller planes, seasonal market mix), a validation page and a **plain-language chatbot**. Every number on every page, and in the chat, comes from the same model. Example answers from the prototype:
 
 - A new **twice-weekly, 300-seat route** (modelled on UK-market behaviour, Nov 2026 – Oct 2027) adds **≈ 35,000 guest-nights** and **≈ 8,200 new hotel arrivals**.
 - Cutting **7 weekly London flights** over winter 2026/27 costs **≈ 49,000 guest-nights**, about **1.4%** of national winter demand.
@@ -46,7 +46,7 @@ A working decision-support prototype that converts air supply into hotel guest-n
 | --- | --- |
 | **The model** | One canonical module (`pipeline/hybrid.py`): parametric chain + LightGBM hybrid, deterministic and reproducible |
 | **The scenario engine** | `pipeline/simulator.py`: six global levers, signed and dated route edits, analog estimates for new origins, horizon to Dec 2028 |
-| **The simulator app** | `app/streamlit_app.py`: a page per headline question, a scenario lab with sensitivity analysis and a save/compare library, and live back-test validation |
+| **The simulator app** | `app/streamlit_app.py`: an overview, a scenario lab with sensitivity analysis and a save/compare library, and back-test validation |
 | **The chatbot** | *Ask the model* page: the brief's five what-if questions answered by tools that call the real model, with a chart per answer |
 | **The evidence** | `docs/METHODS.md`: every test, every decision, every limitation, with dates |
 
@@ -187,7 +187,7 @@ If flight and hotel “country” matched, no market could have more hotel guest
                    ▼                              ▼
    ┌──────────────────────────────┐  ┌────────────────────────────┐
    │  5a. SIMULATOR APP           │  │  5b. CHATBOT AGENT         │
-   │  3 question pages · lab      │  │  plain-language questions  │
+   │  overview · scenario lab     │  │  plain-language questions  │
    │  validation · library        │  │  8 tools → the same model  │
    └──────────────────────────────┘  └────────────────────────────┘
 ```
@@ -220,7 +220,7 @@ If flight and hotel “country” matched, no market could have more hotel guest
 | --- | --- |
 | *How many extra hotel nights would a new twice-weekly flight generate?* | **≈ +35,000 guest-nights / +8,200 arrivals** over 12 months (600 seats/week, modelled on UK-market behaviour) |
 | *How much would winter hotel demand suffer if an airline cut flights?* | **≈ −49,000 guest-nights** (−1.4% of national winter demand) for 7 fewer weekly London flights, Nov–Feb |
-| *Which countries bring the most hotel guests per available seat?* | A live ranking on the **Guests per seat** page: hotel arrivals per 1,000 seats, a conversion-vs-stay chart and a month-by-market heatmap |
+| *Which countries bring the most hotel guests per available seat?* **Nationally, ≈ 176 hotel arrivals per 1,000 seats.** Per country, the data can't answer it honestly: flight records file passengers by departure country, hotel records by nationality. Passenger nationality on the flight side would unlock it |
 
 ## For DCT planners
 
@@ -293,8 +293,8 @@ Better-aligned flights and hotels mean fewer empty rooms after supply shocks and
 ## If shortlisted: a 15-minute live demonstration
 
 1. **Trust first.** Open the Validation page: predicted vs actual on the held-out window, national total within 0.14%.
-2. **The judges' question.** Take a route question from the panel and answer it on the New route or Winter flight cut page in under a minute.
-3. **Explain the answer.** The monthly chart, the funnel showing where the seats go, and, in the scenario lab, contribution bars and the sensitivity tornado.
+2. **The judges' question.** Take a route question from the panel and answer it in the scenario lab, or ask the chatbot, in under a minute.
+3. **Explain the answer.** The monthly chart, the contribution bars and the sensitivity tornado.
 4. **Same question, plain language.** Ask the chatbot; show its tool calls and the identical number.
 5. **Limits, unprompted.** Show the market-attribution warning and explain what data would remove it.
 
@@ -319,25 +319,24 @@ Better-aligned flights and hotels mean fewer empty rooms after supply shocks and
 
 # 9. Visuals, prototype and supporting materials
 
-## The simulator: New route page (mock-up of the live screen)
+## The simulator: Scenario lab (mock-up of the live screen)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ ✈ Overview   │ New route                                                 │
-│ THE THREE    │ “How many extra hotel nights would a new twice-weekly     │
-│ QUESTIONS    │   flight from a given country generate?”                  │
-│ ▸ New route  │ ┌────────────────────────────────────────────────────────┐│
-│   Winter cut │ │ Origin: United Kingdom  Flights/wk: 2  Aircraft: 300   ││
-│   Guests per │ │ First month: 2026-11    Months operated: 12            ││
-│   seat       │ └────────────────────────────────────────────────────────┘│
-│ EXPLORE      │  Extra guest-nights  Extra arrivals  Per year  Per seat   │
-│   Scenario   │     +34,831            +8,178        +34,831    1.11      │
-│   lab        │                                                           │
-│   Ask the    │  Extra guest-nights by month    Where the added seats go  │
-│   model      │  ▃▃▅▇█▇▅▃▃▃▄▅                   Seats       31,286 ████   │
-│ EVIDENCE     │                                 Passengers  27,891 ███    │
-│   Validation │                                 Terminating  8,778 █      │
-│              │                                 Arrivals     8,178 █      │
+│ ✈ Overview   │ Scenario lab                                              │
+│ EXPLORE      │ ┌────────────────────────────────────────────────────────┐│
+│ ▸ Scenario   │ │ Seats 1.00×  Load factor 1.00×  Capture 1.00×  …       ││
+│   lab        │ │ Route changes: INDIA  +2 flights/wk  290 seats         ││
+│   Ask the    │ │                2026-11 → 2027-10                       ││
+│   model      │ └────────────────────────────────────────────────────────┘│
+│ EVIDENCE     │  Δ Guest-nights  Δ Hotel arrivals  Per year  Chain says   │
+│   Validation │     +7,220          +2,120         +7,220    +10,546      │
+│              │                                                           │
+│              │  National guest-nights        What drives the result      │
+│              │  ── baseline ━━ scenario      India +2/wk  ██ +7.2k       │
+│              │                                                           │
+│              │  Which levers move hotel demand most?                     │
+│              │  [Equal ±10%] [Realistic swings] [Share of variance]      │
 └──────────────┴───────────────────────────────────────────────────────────┘
 ```
 
@@ -362,11 +361,8 @@ Better-aligned flights and hotels mean fewer empty rooms after supply shocks and
 
 | Page | What a planner sees |
 | --- | --- |
-| **Overview** | Headline accuracy; a Sankey diagram following a year of seats to hotel arrivals; live answers to the three questions |
-| **New route** | Any country, or a new one priced on an analog; flights, aircraft and dates; guest-nights, arrivals and yield per seat; a ranking of all 33 origins for the same service |
-| **Winter flight cut** | Pick a route and the flights cut; guest-nights lost, share of the season's demand, baseline vs scenario, and an indicative occupancy change |
-| **Guests per seat** | Ranking by hotel arrivals or guest-nights per 1,000 seats; conversion vs length of stay; month-by-market heatmap |
-| **Scenario lab** | Network levers, route changes and seasonal mix shifts combined; contribution by change; sensitivity three ways (equal ±10% shock, measured real-world swings, Sobol variance shares); save, compare and download scenarios |
+| **Overview** | Headline accuracy; a Sankey diagram following a year of seats to hotel arrivals |
+| **Scenario lab** | New routes (or a new country priced on an analog), flight cuts over any window, network levers and seasonal mix shifts; contribution by change; sensitivity three ways (equal ±10% shock, measured real-world swings, Sobol variance shares); save, compare and download scenarios |
 | **Ask the model** | Plain-language questions, an inline chart per answer, and every model call shown |
 | **Validation** | Hybrid vs fixed-ratio chain vs actual on the held-out window, by month and by market-month; what the model can and cannot say |
 
