@@ -48,9 +48,23 @@ Lever semantics
   single market on top of the global ``seats_mult`` (a per-market multiplier,
   not a cap); unknown market names and non-positive values are rejected. A tuple
   keeps ``Scenario`` genuinely immutable.
+* ``season_profile`` is a 12-tuple of Jan..Dec multipliers applied *after* the
+  model. It changes the shape of the year rather than just its level.
+* ``market_month_mult`` is a tuple of ``(market, month, multiplier)`` applied to
+  supply *before* the model, so a seasonal origin mix changes the learned
+  features and the Poisson exposure. It is hybrid-only, like
+  ``market_seats_mult``.
+* ``closed_markets`` switches a market's supply off entirely. This is a
+  structural zero, applied to *both* paths: no seats means no arrivals, even
+  where the model has learned a market effect. A zero global supply lever is
+  still rejected as degenerate; a closed market is a meaningful scenario.
 * ``RouteEdit`` appends terminating supply for an existing market from a start
   month onward (a new route, or extra seats on an existing market), with PAX/P2P
   estimated at the market's average load factor and P2P share.
+* ``RouteChange`` scales (or closes, at ``seats_mult=0``) an existing route over
+  a month range, optionally filtered by city and airline. This is the route-level
+  "more/fewer flights per week" and "discontinued route" lever; a blank city and
+  airline means the whole market.
 
 Attribution guard (docs/METHODS.md §4.5)
 
@@ -113,6 +127,22 @@ class RouteEdit:
 
 
 @dataclass(frozen=True)
+class RouteChange:
+    """Scale or close an existing route over a month range.
+
+    ``city`` and ``airline`` are optional filters; leave them blank to apply the
+    change to every route in the market. ``seats_mult=0`` is a route closure.
+    """
+
+    market: str
+    seats_mult: float
+    started_period: str
+    ended_period: str | None = None
+    city: str = ""
+    airline: str = ""
+
+
+@dataclass(frozen=True)
 class Scenario:
     seats_mult: float = 1.0
     lf_mult: float = 1.0
@@ -122,6 +152,18 @@ class Scenario:
     season_mult: float = 1.0
     market_seats_mult: tuple = ()  # ((market, multiplier), ...)
     routes: tuple = ()
+    route_changes: tuple = ()  # (RouteChange, ...)
+    # Advanced seasonal controls, all optional and backward-compatible:
+    # * season_profile: 12 multipliers (Jan..Dec) applied to New Arrivals and
+    #   Guest Nights after the model; it changes the *shape* of the year.
+    # * market_month_mult: ((market, month, multiplier), ...) applied to that
+    #   market's supply in a single calendar month, before the model. This is
+    #   how a seasonal origin mix is expressed.
+    # * closed_markets: markets whose supply is switched off entirely. Unlike a
+    #   zero global lever, a closed market is a meaningful structural zero.
+    season_profile: tuple = ()
+    market_month_mult: tuple = ()
+    closed_markets: tuple = ()
 
 
 class Simulator:
@@ -212,6 +254,15 @@ class Simulator:
         pred = H.predict_hybrid(self._boosters[self.window], scaled)
         alos = H.predict_alos(self._alos_boosters, scaled)
         new_arr = pred * scenario.capture_mult * scenario.season_mult
+        season_factor = self._season_factor(scenario, scaled["month"])
+        if season_factor is not None:
+            new_arr = new_arr * season_factor
+        # A closed market is a structural zero, not a behavioural prediction:
+        # no seats means no arrivals, even if the model has learned a market
+        # effect. This also keeps route/supply suspensions honest.
+        no_supply = scaled["Total_Seats"].to_numpy(dtype=float) <= 0
+        if no_supply.any():
+            new_arr = np.where(no_supply, 0.0, new_arr)
         out = scaled[
             ["ym_str", "ym", "market", "month", "routes", "airlines",
              "Total_Seats", "PAX", "P2P"]
@@ -245,6 +296,10 @@ class Simulator:
         )
         out["NewArrivalHat"] = out["NewArrivalHat"] * scenario.season_mult
         out["GuestNightsHat"] = out["GuestNightsHat"] * scenario.season_mult
+        season_factor = self._season_factor(scenario, out["month"])
+        if season_factor is not None:
+            out["NewArrivalHat"] = out["NewArrivalHat"] * season_factor
+            out["GuestNightsHat"] = out["GuestNightsHat"] * season_factor
         out["data_status"] = "supply-side-only"
         out.attrs["data_status"] = "supply-side-only"
         return out
@@ -281,6 +336,11 @@ class Simulator:
         """Per-market chain capture (calibration coefficient), the model's view."""
         self._require_data()
         return self.params["capture"].copy()
+
+    def base_routes(self) -> pd.DataFrame:
+        """Route-grain supply (market, city, airline, month), for route editors."""
+        self._require_data()
+        return self._base_routes.copy()
 
     def reproduce_competition_window(self):
         """Train the competition window if needed and replay the T5 protocol.
@@ -447,6 +507,36 @@ class Simulator:
             if new_rows:
                 rows = pd.concat([rows, pd.DataFrame(new_rows)], ignore_index=True)
 
+        # Route-level changes are applied at the route grain *before* the
+        # market-month aggregation, so a single city/airline can be scaled or
+        # closed without touching the rest of the market.
+        for change in scenario.route_changes:
+            mkt = change.market.upper().strip()
+            start = pd.Period(change.started_period, freq="M")
+            end = (
+                pd.Period(change.ended_period, freq="M")
+                if change.ended_period
+                else COVERED_TO
+            )
+            mask = (rows["market"] == mkt) & (rows["ym"] >= start) & (rows["ym"] <= end)
+            if change.city:
+                mask &= rows["city"].astype(str).str.upper() == change.city.upper()
+            if change.airline:
+                mask &= (
+                    rows["airline"].astype(str).str.upper()
+                    == change.airline.upper()
+                )
+            if not mask.any():
+                raise ValueError(
+                    f"RouteChange {change!r} matched no route in the pack; "
+                    "check the market, city, airline and month range."
+                )
+            for col in ("Total_Seats", "Total_PAX", "Total_P2P"):
+                rows[col] = rows[col].astype(float)
+            rows.loc[mask, ["Total_Seats", "Total_PAX", "Total_P2P"]] *= float(
+                change.seats_mult
+            )
+
         agg = rows.groupby(["ym", "market"], dropna=False).agg(
             Total_Seats=("Total_Seats", "sum"),
             Total_PAX=("Total_PAX", "sum"),
@@ -468,6 +558,13 @@ class Simulator:
              "Total_Transfer", "Total_Transit"]
         ].copy()
 
+        # A closed market is a structural zero. Apply it to *raw* so both the
+        # hybrid and the parametric chain honour the closure, and so the zero
+        # survives the feature/exposure rebuild below.
+        if scenario.closed_markets:
+            closed = raw["market"].isin(scenario.closed_markets)
+            raw.loc[closed, ["Total_Seats", "Total_PAX", "Total_P2P"]] = 0.0
+
         # Scale supply: pre-model levers that rebake into features + exposure.
         seats_had = raw["Total_Seats"].to_numpy(dtype=float) > 0
         base_seats = raw["Total_Seats"].clip(lower=1).to_numpy(dtype=float)
@@ -478,7 +575,7 @@ class Simulator:
             / raw["Total_PAX"].clip(lower=1).to_numpy(dtype=float),
             0.0,
         )
-        cmult = self._market_mult(scenario, raw["market"])
+        cmult = self._market_mult(scenario, raw["market"], raw["month"])
         scaled = raw.copy()
         scaled["Total_Seats"] = raw["Total_Seats"] * cmult
         scaled["Total_PAX"] = scaled["Total_Seats"] * lf * scenario.lf_mult
@@ -505,13 +602,87 @@ class Simulator:
                 raise ValueError(
                     f"market_seats_mult[{mkt!r}] must be > 0; got {mult!r}"
                 )
+        for mkt in scenario.closed_markets:
+            if mkt not in known:
+                raise ValueError(
+                    f"closed_markets key {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model."
+                )
+        for change in scenario.route_changes:
+            mkt = change.market.upper().strip()
+            if mkt not in known:
+                raise ValueError(
+                    f"RouteChange market {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model."
+                )
+            if change.seats_mult < 0:
+                raise ValueError(
+                    f"RouteChange seats_mult must be >= 0; got {change.seats_mult!r}"
+                )
+            try:
+                start = pd.Period(change.started_period, freq="M")
+                end = (
+                    pd.Period(change.ended_period, freq="M")
+                    if change.ended_period
+                    else COVERED_TO
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"RouteChange has an invalid period: {change!r}"
+                ) from exc
+            if start < COVERED_FROM or start > COVERED_TO:
+                raise ValueError(
+                    f"RouteChange started_period {start} must be within "
+                    f"{COVERED_FROM}..{COVERED_TO}."
+                )
+            if end < start or end > COVERED_TO:
+                raise ValueError(
+                    f"RouteChange ended_period {end} must be >= {start} and "
+                    f"<= {COVERED_TO}."
+                )
+        if scenario.season_profile:
+            arr = np.asarray(scenario.season_profile, dtype=float)
+            if arr.shape != (12,):
+                raise ValueError(
+                    "season_profile must contain exactly 12 monthly multipliers "
+                    f"(Jan..Dec); got shape {arr.shape}"
+                )
+            if np.any(arr < 0):
+                raise ValueError("season_profile multipliers must be >= 0")
+        for mkt, month, mult in scenario.market_month_mult:
+            if mkt not in known:
+                raise ValueError(
+                    f"market_month_mult key {mkt!r} is not one of the 33 flight "
+                    "markets; new markets cannot be encoded by the model."
+                )
+            if not 1 <= int(month) <= 12:
+                raise ValueError(
+                    f"market_month_mult month must be 1..12; got {month!r}"
+                )
+            if mult < 0:
+                raise ValueError(
+                    f"market_month_mult[{mkt!r}, {month}] must be >= 0; got {mult!r}"
+                )
 
     @staticmethod
-    def _market_mult(scenario: Scenario, markets) -> np.ndarray:
+    def _season_factor(scenario: Scenario, months):
+        """Return a per-row seasonal multiplier, or ``None`` if not configured."""
+        if not scenario.season_profile:
+            return None
+        arr = np.asarray(scenario.season_profile, dtype=float)
+        idx = np.asarray(months, dtype=int) - 1
+        return arr[idx]
+
+    @staticmethod
+    def _market_mult(scenario: Scenario, markets, months=None) -> np.ndarray:
         mult = np.full(len(markets), scenario.seats_mult, dtype=float)
         keys = markets.to_numpy()
         for mkt, v in scenario.market_seats_mult:
             mult[keys == mkt] *= v
+        if scenario.market_month_mult and months is not None:
+            month_arr = np.asarray(months, dtype=int)
+            for mkt, month, v in scenario.market_month_mult:
+                mult[(keys == mkt) & (month_arr == int(month))] *= float(v)
         return mult
 
     @staticmethod

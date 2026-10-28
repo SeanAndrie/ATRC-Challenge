@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app import logic as L  # noqa: E402
 from pipeline.simulator import Scenario  # noqa: E402
 
-# The eleventh diagnostic. Writes no report and needs no data files: it pins the
+# The app-logic diagnostic. Writes no report and needs no data files: it pins the
 # Streamlit app's *pure* logic (scenario assembly, route-form conversion, delta
 # math, and the chart builders) on synthetic frames, so the UI can be verified
 # headlessly. Anything that requires a fitted engine is deliberately out of
@@ -72,6 +72,20 @@ def main():
             raise AssertionError(f"expected ValueError for freq/seats {bad}")
     print("route_edit multiplies frequency x seats and rejects non-positive inputs")
 
+    rc = L.route_change("dubai", 0.5, "2025-09", "2025-12", "DXB", "EK")
+    assert rc.market == "DUBAI" and rc.seats_mult == 0.5
+    assert rc.ended_period == "2025-12"
+    for bad in ((0.5, "2025-12", "2025-09"), (-0.1, "2025-09", None)):
+        try:
+            L.route_change("DUBAI", bad[0], bad[1], bad[2])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for route change {bad}")
+    sc_rc = L.build_scenario({}, route_changes=(rc,))
+    assert sc_rc.route_changes == (rc,)
+    print("route_change validates periods and non-negative multipliers")
+
     # -- month options cover the pack window -------------------------------
     opts = L.month_options()
     assert opts[0] == "2022-01" and opts[-1] == "2026-02"
@@ -101,6 +115,46 @@ def main():
     assert np.isclose(totals["GuestNightsHat"].sum(), frame["GuestNightsHat"].sum())
     print("market_totals ranks markets descending and preserves the total")
 
+    # -- impact windows, seasonal shape, market x season -------------------
+    last12 = L.filter_window(frame, "Last 12 months")
+    assert len(last12["ym"].unique()) == 6  # synthetic frame only has 6 months
+    first12 = L.filter_window(frame, L.WINDOW_OPTIONS[1], route_start="2024-03")
+    assert first12["ym"].min() == pd.Period("2024-03", freq="M")
+    assert first12["ym"].max() == pd.Period("2024-06", freq="M")
+    winter = L.filter_window(frame, "Winter (Dec–Feb)")
+    assert set(winter["month"].unique()) <= {12, 1, 2}
+    profile = L.season_profile_from(0.8, 1.0, 1.2, 1.0)
+    assert len(profile) == 12 and profile[0] == profile[11] == 0.8
+    pairs = L.market_month_pairs(
+        [{"market": "ALPHA", "Winter": 0.8, "Spring": 1.0, "Summer": 1.2, "Autumn": 1.0}]
+    )
+    assert ("ALPHA", 12, 0.8) in pairs and ("ALPHA", 7, 1.2) in pairs
+    assert all(m == 1 for _, m, _ in pairs if _ == "ALPHA" and m in (3, 4, 5))
+    matrix = L.market_season_matrix(frame, "GuestNightsHat")
+    assert matrix.shape == (3, 12)
+    assert np.isclose(matrix.to_numpy().sum(), frame["GuestNightsHat"].sum())
+    print("impact window, seasonal profile and market x season matrix ok")
+
+    # -- attribution range and efficiency ratio ---------------------------
+    hotel_mix = frame.groupby("market")["GuestNightsHat"].sum()
+    ranges = L.attribution_range(frame, hotel_mix)
+    assert len(ranges) == 3
+    assert np.all(ranges["low"] <= ranges["last_departure"] + 1e-9)
+    assert np.all(ranges["high"] >= ranges["last_departure"] - 1e-9)
+    assert np.isclose(ranges["last_departure"].sum(), frame["GuestNightsHat"].sum())
+    eff = L.efficiency_table(frame)
+    assert "guests_per_1k_seats" in eff.columns
+    assert np.isclose(
+        eff.set_index("market").loc["ALPHA", "guests_per_1k_seats"],
+        1000.0
+        * frame.loc[frame["market"] == "ALPHA", "NewArrivalHat"].sum()
+        / frame.loc[frame["market"] == "ALPHA", "Total_Seats"].sum(),
+    )
+    assert np.isclose(
+        L.wmape([100.0, 50.0], [110.0, 45.0]), 100.0 * 15.0 / 150.0
+    )
+    print("attribution range, efficiency ratio and WMAPE ok")
+
     # -- headline deltas ----------------------------------------------------
     base = _synthetic_market_frame()
     scen = base.copy()
@@ -124,6 +178,10 @@ def main():
         L.monthly_trend(monthly, monthly, chain_monthly=monthly),
         L.seasonal_bars(seasonal, seasonal),
         L.market_pareto(totals, totals),
+        L.market_season_heatmap(L.market_season_matrix(frame)),
+        L.attribution_range_chart(
+            L.attribution_range(frame, frame.groupby("market")["GuestNightsHat"].sum())
+        ),
         L.sensitivity_bars(
             pd.DataFrame(
                 {
@@ -140,7 +198,7 @@ def main():
         ),
     ]
     assert all(isinstance(f, go) for f in figs), [type(f) for f in figs]
-    print("all five chart builders return Plotly Figures")
+    print("all chart builders return Plotly Figures")
 
     # -- the market-mix flag survives the reshape (attribution guard) ------
     assert set(frame["data_status"]) == {"supply-side-only"}

@@ -159,10 +159,11 @@ pipeline/simulator.py         Scenario/Simulator API for the Streamlit app
 pipeline/sensitivity.py       empirically measured lever spreads + Sobol (sensitivity view 2)
 pipeline/tests/    ten standalone diagnostics
 notebooks/         four marimo notebooks
-docs/              METHODS.md + the organisers' brief
+docs/              METHODS.md, SUBMISSION_PACK.md + the organisers' brief
 tools/             one-off utilities + the OpenSky puller (fetch_opensky.py)
-app/               Streamlit simulator (stub)
-outputs/           generated reports + scratch (gitignored)
+app/               working Streamlit simulator (logic.py + copy.py + simulator.py)
+outputs/           generated reports + scratch (gitignored);
+                   outputs/models/simulator_full.pkl is tracked
 ```
 
 Tiers: **raw** is gitignored because it is large and re-downloadable; **interim**
@@ -901,9 +902,11 @@ sim.save()                                  # optional cache -> outputs/models/
 Fitting is **lazy and per-window**: `Simulator(window=...)` selects the model
 default scenarios are scored with, and `fit()` trains only that window
 (`full` for scenario work, `competition` for `reproduce_competition_window`).
-`save()`/`load()` pickle the fitted state to `outputs/models/` (gitignored) to
-spare the ~1-minute refit on a Streamlit restart; no artifact is required, and a
-fresh fit yields identical predictions.
+`save()`/`load()` pickle the fitted state to `outputs/models/` to spare the
+~1-minute refit on a Streamlit restart; `outputs/models/simulator_full.pkl` is
+tracked so the app runs without the licensed raw pack, and a fresh fit yields
+identical predictions. `load()` restores the categorical encodings and raises a
+clear refit error if an old artifact lacks the learned-ALOS boosters.
 
 The hybrid path's guest-nights use the **learned ALOS** — a 5-seed LightGBM
 regression on the same leak-free features as the arrival model, fitted once on
@@ -917,11 +920,19 @@ the T5 New-Arrivals protocol as before.
 Lever semantics are documented in the `simulator.py` docstring: the three
 supply levers re-enter the model's features *and* its Poisson exposure offset
 pre-score (so the hybrid responds non-linearly); `capture_mult`, `season_mult`
-and `alos_mult` are post-hoc dials. Simulation is bounded by the model's own
-world: markets are a fixed 33-level categorical (new markets and
-out-of-horizon route edits raise), supply levers must be positive (a zeroed
-lever is rejected, not silently degenerated), and the horizon stops at the event
-calendar's `COVERED_TO` = 2026-02. Because the §4.5 join is structurally wrong
+and `alos_mult` are post-hoc dials. Three optional fields extend the brief's
+scenario surface without changing the default fit:
+`season_profile` (12 monthly multipliers, applied post-hoc),
+`market_month_mult` (`((market, month, multiplier), ...)`, applied pre-model),
+`closed_markets` (a structural zero applied to both paths) and `RouteChange`
+(scale or close an existing city/airline route over a month range, at
+`seats_mult=0` for a closure). A closed market therefore has no seats, no
+arrivals and no guest nights; the hybrid cannot invent guests from a market
+effect when the flights are gone. Simulation is
+bounded by the model's own world: markets are a fixed 33-level categorical (new
+markets and out-of-horizon route edits raise), global supply levers must be
+positive (a zeroed global lever is rejected, not silently degenerated), and the
+horizon stops at the event calendar's `COVERED_TO` = 2026-02. Because the §4.5 join is structurally wrong
 at market level, `market()` returns rows flagged
 `attrs["data_status"] == "supply-side-only"` **and** a constant `data_status`
 column (the attr is lost by `groupby`/serialization; the column survives), and
@@ -948,10 +959,11 @@ otherwise fits once (`st.cache_resource`) and saves it.
 `monthly_summary.csv`, `markets_by_month.csv`, `aircraft_types.csv`,
 `capture_rate.csv` (plus `checksums.md5`).
 
-**Notebooks (marimo, three):** `hybrid_layer.py` (the deliverable — Part A the
+**Notebooks (marimo, four):** `hybrid_layer.py` (the deliverable — Part A the
 parametric chain, Part B the hybrid LightGBM layer, Part C the shared pin block),
-`linkage_study.py` (main public-data analysis, Phase 1 evidence),
-`flight_analysis.py` (read of the OpenSky ADS-B extract, Phase 1 evidence).
+`sensitivity_empirical.py` (§3.4 empirical companion), `linkage_study.py` (main
+public-data analysis, Phase 1 evidence), `flight_analysis.py` (read of the
+OpenSky ADS-B extract, Phase 1 evidence).
 
 **Tools:** `tools/fetch_opensky.py` (the OpenSky pull — the only thing in the repo
 that spends credits), `tools/export_omaa_csv.py`,
@@ -963,38 +975,44 @@ country→region mapping), `pipeline/competition/` (loader + audit),
 `pipeline/hotel_supply.py`, `pipeline/calendar_events.py` (UAE event calendar,
 §4.3), `pipeline/hybrid.py` (canonical chain + LightGBM layer, shared with the
 notebook), `pipeline/simulator.py` (`Scenario`/`Simulator` API for the app),
-`pipeline/paths.py`, `pipeline/tests/` (9 diagnostics).
+`pipeline/paths.py`, `pipeline/tests/` (10 diagnostics).
 
 **Docs:** [`../README.md`](../README.md) (entry point), this file
 ([`METHODS.md`](METHODS.md)), [`competition-brief.md`](competition-brief.md)
 (supplied by the organisers), and the seven generated reports in `outputs/`.
 
-**App:** `app/simulator.py` is a Streamlit stub, not yet built out by a UI
-contributor. The model side it will call — `pipeline/simulator.py` — is
-complete and guarded; see the Simulator package subsection under Reproducibility.
+**App:** `app/simulator.py` is the working Streamlit deliverable, with five tabs
+(Scenario, By market & season, Which levers matter, Validation, Assumptions &
+limits), a pure logic layer (`app/logic.py`) and auditable copy
+(`app/copy.py`). It loads the tracked fitted artifact, scores scenarios through
+`pipeline/simulator.py`, and exposes the seasonal shape, seasonal market mix,
+market suspension, impact windows, market × season heatmap, attribution range
+and guests-per-1,000-seats ratio. See the Simulator package subsection under
+Reproducibility.
 
 ---
 
 ## Open work and next steps
 
-1. **Do not ship a market-level view without attribution.** This is now the top
-   blocker, ahead of the simulator. `pipeline/tests/test_market_attribution.py`
-   pins the defect, and `test_market_origin_validation.py` confirms it against
-   SCAD's official embarkation mix (pack GCC +5–7 pp every year at region level;
-   no coarser grouping rescues capture), but nothing yet *resolves* it, and every
-   market-split output is affected. Either (a) source passenger
-   residence/nationality on the flight side, or (b) restrict all output to
-   aggregate and re-scope success criteria 01, 05 and 06, which are rendered by
-   market. Attempting to infer the mapping from the pack alone is not
-   identifiable: a 33×45 origin-to-nationality matrix on 1,405 rows has more
-   parameters than data.
-2. **The interactive front end is implemented.** `app/simulator.py` (Streamlit) with
-   tabs for Scenario, market/season, sensitivity, validation, and assumptions; the
-   model side (`pipeline/hybrid.py` + `pipeline/simulator.py`) is complete with
-   lazy per-window fit, save/load, and guards. The front end follows the guidance:
-   aggregate views remain the default, and the market breakdown and per-market
-   seat mix are explicit, clearly labelled `supply-side-only`. Periodically
-   revisit (1) as a data fix if residence data becomes available.
+1. **Do not ship a market-level *point* without attribution.** The defect is
+   pinned by `pipeline/tests/test_market_attribution.py`, and
+   `test_market_origin_validation.py` confirms it against SCAD's official
+   embarkation mix (pack GCC +5–7 pp every year at region level; no coarser
+   grouping rescues capture). The app now ships a **bounded** market view: the
+   last-departure point plus a range across demand-mix and supply-mix
+   allocations. That is a decision aid, not a fix. A true fix needs (a)
+   passenger residence/nationality on the flight side, or (b) all output
+   restricted to aggregate and criteria 01, 05 and 06 re-scoped. Attempting to
+   infer the mapping from the pack alone is not identifiable: a 33×45
+   origin-to-nationality matrix on 1,405 rows has more parameters than data.
+2. **The interactive front end is implemented.** `app/simulator.py` (Streamlit)
+   has tabs for Scenario, market/season, sensitivity, validation, and
+   assumptions; the model side (`pipeline/hybrid.py` + `pipeline/simulator.py`)
+   has lazy per-window fit, save/load, guards, seasonal shape, seasonal market
+   mix, market suspension (structural zero), impact windows, a market × season
+   heatmap, guests per 1,000 seats, and the attribution range. Aggregate views
+   remain the default; the market breakdown and per-market seat mix are explicit,
+   clearly labelled `supply-side-only`.
 3. **Measure capture for the 52 air-only origins.** OpenSky data is present in
    `data/raw/opensky/` but unconsumed; this would extend the chain beyond the 33
    matched markets. Re-pulling requires `tools/fetch_opensky.py` and spends
@@ -1002,8 +1020,8 @@ complete and guarded; see the Simulator package subsection under Reproducibility
    attribution defect.
 4. **Market-specific seasonality** once more than 43 months are available.
 5. **Serve the ML layer.** Done: `Simulator().fit()` trains the hybrid end to
-   end from the pack and `monthly()`/`market()` score scenarios with the learned
-   capture; the remaining work is the UI that exposes it (item 2).
+   end from the pack, `monthly()`/`market()` score scenarios with the learned
+   capture and ALOS, and `app/simulator.py` exposes them (item 2).
 6. **Test-frame scoring beyond New Arrivals** is impossible without `Guests`; note
    it explicitly in the submission.
 7. **Source-market public holidays.** The brief asks for them and the pack shipped

@@ -234,10 +234,18 @@ def simulate(
     exactly and produces the model's New Arrivals and Guest-nights.
     """
     out = p.copy()
-    seats = out["Total_Seats"] * seats_mult
-    lf = (out["Total_PAX"] / out["Total_Seats"]) * lf_mult
+    seats = out["Total_Seats"].astype(float) * seats_mult
+    # Keep the chain frame internally consistent: the seats stage and the
+    # downstream stages must describe the same scenario. (The old frame left
+    # Total_Seats unscaled while PAX/P2P were scaled, which forced the app's
+    # waterfall to re-apply seats_mult.)
+    out["Total_Seats"] = seats
+    # _safe_ratio keeps a deliberate structural zero (a closed market or a
+    # suspended route) from producing 0/0 -> NaN features. The load factor is
+    # measured on the *base* supply, then applied to the scaled seats.
+    lf = _safe_ratio(out["Total_PAX"], p["Total_Seats"]) * lf_mult
     out["PAX"] = seats * lf
-    p2p_share = (out["Total_P2P"] / out["Total_PAX"]) * p2p_mult
+    p2p_share = _safe_ratio(out["Total_P2P"], out["Total_PAX"]) * p2p_mult
     out["P2P"] = out["PAX"] * p2p_share
 
     # NOTE: `season_mult` is accepted for signature symmetry with the brief's six

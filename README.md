@@ -10,6 +10,7 @@ Start at [`docs/METHODS.md`](docs/METHODS.md).
 | Piece | Where |
 | --- | --- |
 | Methods, results and decisions (start here) | [`docs/METHODS.md`](docs/METHODS.md) |
+| Deck outline, 90-second demo script, system diagram, planner playbook | [`docs/SUBMISSION_PACK.md`](docs/SUBMISSION_PACK.md) |
 | Hybrid layer: parametric chain + LightGBM (Phases 3–4) | `notebooks/hybrid_layer.py` |
 | Competition-pack loader | `pipeline/competition/` |
 | Interactive simulator | `app/simulator.py` (Streamlit app) |
@@ -40,7 +41,8 @@ pipeline/tests/    ten standalone diagnostics
 notebooks/         four marimo notebooks
 docs/              METHODS.md and the organisers' brief
 tools/             one-off utilities + the OpenSky puller
-outputs/           generated reports + scratch (gitignored)
+outputs/           generated reports + scratch (gitignored);
+                   outputs/models/simulator_full.pkl is tracked
 ```
 
 No module hardcodes an absolute path. `pipeline/paths.py` owns them all, and
@@ -82,6 +84,14 @@ in particular is quota-limited and may not be repeatable.
 
 ## Checking the work
 
+For the submission gate, run one command:
+
+```
+scripts/check.sh          # app logic + sensitivity + packaging pins + attribution guard
+```
+
+The individual diagnostics:
+
 ```
 .venv/bin/python pipeline/dct/dct_validate.py        # reconciliation
 .venv/bin/python pipeline/tests/test_market_link.py
@@ -93,6 +103,7 @@ in particular is quota-limited and may not be repeatable.
 .venv/bin/python pipeline/tests/test_market_origin_validation.py   # pack region mix vs SCAD embarkation mix
 .venv/bin/python pipeline/tests/test_simulator_package.py   # packaging gate; writes no report
 .venv/bin/python pipeline/tests/test_sensitivity.py         # empirical lever spreads; writes no report
+.venv/bin/python pipeline/tests/test_simulator_app.py       # app logic, charts, impact windows
 .venv/bin/python pipeline/tests/crosscheck_markets.py
 ```
 
@@ -103,24 +114,25 @@ December 2017 DCT report states 4,875,499 guests, and the parsed months sum to
 
 The diagnostics write into `outputs/`. Each report is written fresh by its
 script on every run and is gitignored; the commands above name the generators.
-`test_simulator_package.py` is the ninth diagnostic but writes no report: it
-re-fits the packaged model and pins it to the notebook's numbers, so the
-simulator cannot silently drift from the deliverable. `test_sensitivity.py` is
-the tenth and also writes no report: it pins the empirical-sensitivity module on
-a synthetic panel (METHODS §3.4).
+`test_simulator_package.py` writes no report: it re-fits the packaged model and
+pins it to the notebook's numbers, so the simulator cannot silently drift from
+the deliverable. `test_sensitivity.py` writes no report and pins the
+empirical-sensitivity module on a synthetic panel (METHODS §3.4).
+`test_simulator_app.py` writes no report and pins the app's pure logic (impact
+windows, seasonal shape, market × season matrix, attribution range, efficiency
+ratio, chart builders).
 
 ## Streamlit simulator
 
 The parametric chain and the hybrid layer are packaged as an importable API for
-the interactive front end. `app/simulator.py` is a stub the UI contributor
-builds on; the model side is ready and guarded:
+the interactive front end. `app/simulator.py` is the working Streamlit app:
 
 ```python
 from pipeline.simulator import Simulator, Scenario
 sim = Simulator().fit()                       # trains only the requested window
 sim.monthly(Scenario(seats_mult=1.2))         # aggregate view — safe by default
 sim.market(Scenario(seats_mult=1.2))          # market view — flagged supply-side-only
-sim.save()                                    # optional cache -> outputs/models/ (gitignored)
+sim.save()                                    # cache -> outputs/models/
 ```
 
 Supply levers (`seats_mult`, `lf_mult`, `p2p_mult`) rewrite the supply frame, so
@@ -128,14 +140,22 @@ the hybrid's features and Poisson exposure respond non-linearly;
 `capture_mult` / `season_mult` / `alos_mult` are post-hoc dials. The hybrid
 path's guest-nights use the **learned ALOS** (a 5-seed regression on the model's
 features), while `chain()` keeps the fixed per-market `ALOS[m]` so the
-parametric layer stays interpretable. Fitting is lazy
-and per-window (`full` for scenarios, `competition` for the T5 replay); a fitted
-simulator can be pickled with `save()`/`load()` to spare the refit. Because of
-the market-join defect in §4.5, `market()` rows carry
+parametric layer stays interpretable. Fitting is lazy and per-window (`full` for
+scenarios, `competition` for the final test-window replay); a fitted simulator
+can be pickled with `save()`/`load()` to spare the refit.
+
+The app adds scenario controls the brief asks for: a monthly **seasonal shape**,
+a **seasonal market mix**, a **suspend market** structural zero, a route editor
+with route-level frequency/closure changes, an **impact window** (full / first 12 months after change / last 12 months /
+calendar year / season), a **market × season heatmap**, a **guests-per-1,000-seats**
+ratio, and an **attribution range** that bounds each market's guest nights across
+the last-departure, demand-mix and supply-mix allocations. Because of the
+market-join defect in §4.5, `market()` rows carry
 `attrs["data_status"] == "supply-side-only"` (and a matching `data_status`
-column) and scenarios cannot invent new markets, zero a supply lever, or run
-past the event calendar's 2026-02 horizon. See
-[`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility).
+column) and scenarios cannot invent new markets, zero a global supply lever, or
+run past the event calendar's 2026-02 horizon. A market can be **suspended**
+explicitly (a structural zero), and the hybrid forces zero arrivals when seats
+are zero. See [`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility).
 
 ## Notebooks
 
@@ -171,15 +191,22 @@ That trains 15 LightGBM models, so it is not instant.
 .venv/bin/streamlit run app/simulator.py
 ```
 
-Run `.venv/bin/streamlit run app/simulator.py`. Tabs: Scenario (levers + route edits + waterfall), By market & season, Which levers matter, Validation, Assumptions & limits. Loads cached fitted model if present, else fits once (~1 min).
+Tabs: **Scenario** (levers, route edits, seasonal shape/mix, waterfall),
+**By market & season** (heatmap, attribution range, guests per seat),
+**Which levers matter** (a-priori + empirical Sobol), **Validation** (live final
+test window and last-year holdout, monthly and seasonal weighted error), and
+**Assumptions & limits**. The app loads
+the tracked fitted artifact if present, else fits once (~1 min). For a
+non-interactive smoke test use `.venv/bin/streamlit run app/simulator.py
+--server.headless true`.
 
 
 
 ## Things to know before reading the numbers
 
-- **The competition test window has no `Guests` column.** Only New Arrivals can be
+- **The final test window has no `Guests` column.** Only New Arrivals can be
   scored out-of-sample on 2025-08 → 2026-02; guest-nights are validated in-sample
-  and on the leave-tail holdout.
+  and in the last-year holdout.
 - **Capture is behavioural, not mechanical.** `New Arrivals / P2P` absorbs
   visiting-friends-and-relatives travel, booking behaviour and non-air hotel
   demand. Move it as a lever with its spread in view.
@@ -211,12 +238,12 @@ submission itself is Phase 2–4.
 
 ## Competition deliverable — results
 
-On the 2022-2026 pack the parametric demand chain predicts New Arrivals at 28.4%
-WMAPE on a holdout (36.0% seasonal-naive), and the hybrid LightGBM layer cuts
-that to **21.3%** — **20.6%** on the actual 2025-08 to 2026-02 test window
-(aggregate bias −0.1% vs +1.1%). Guest-nights reach 20.8% with a learned ALOS
-(the value the simulator's hybrid path ships — see
-[`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility)).
+On the 2022-2026 pack the simple formula demand chain predicts New Arrivals at
+28.4% weighted error on the last-year holdout (36.0% seasonal benchmark), and
+the hybrid LightGBM layer cuts that to **21.3%** — **20.6%** on the unseen
+2025-08 to 2026-02 test window (overall bias −0.1% vs +1.1%). Guest-nights
+reach 20.8% weighted error with a learned ALOS (the value the simulator's hybrid
+path ships — see [`METHODS.md` §Reproducibility](docs/METHODS.md#reproducibility)).
 See [`docs/METHODS.md` §3–4](docs/METHODS.md#phase-3--parametric-layer).
 
 ### Read this before quoting any market-level number
@@ -270,11 +297,11 @@ in sign, small. Source-market public holidays are still not covered; see
 | --- | --- | --- |
 | 01 | Working simulator, not a report | `pipeline/simulator.py` (`Scenario`/`Simulator`); `app/simulator.py` (Streamlit UI) |
 | 02 | Transparent, adjustable chain | [`METHODS.md` Phase 3](docs/METHODS.md#phase-3--parametric-layer) — every ratio a lever |
-| 03 | Validation with honest error metric | T3/T4/T5, WMAPE on holdout and competition window |
-| 04 | Sensitivity analysis | T6 a-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |
-| 05 | Granularity by market and season | 33-market panel, monthly season index — **attribution unvalidated, see the warning above** |
-| 06 | Decision relevance | capture spread is the allocation lever; **market levers misfiled, see the warning above** |
-| 07 | Reproducibility | pinned assertions T7/ML-6; [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
+| 03 | Validation with honest error metric | In-sample, last-year holdout, and final test window; weighted error reported |
+| 04 | Sensitivity analysis | A-priori Sobol + empirical lever spreads ([`METHODS.md` §3.4](docs/METHODS.md#34-sensitivity)) |
+| 05 | Granularity by market and season | 33-market panel, monthly season index, market × season heatmap, **attribution range** — market levels are bounded, not measured |
+| 06 | Decision relevance | capture spread is the allocation lever; impact-window selector, guests per 1,000 seats, dynamic decision summary — **market levers misfiled, see the warning above** |
+| 07 | Reproducibility | automated assertions; [`METHODS.md#reproducibility`](docs/METHODS.md#reproducibility) |
 
 ## Open work
 
@@ -285,15 +312,15 @@ in sign, small. Source-market public holidays are still not covered; see
   residence/nationality on the flight side, or all output must be re-scoped to
   aggregate — which costs success criteria 01, 05 and 06. See
   [`METHODS.md` §4.5](docs/METHODS.md#45-the-market-join-is-structurally-wrong-and-what-survives).
-- **Simulator ready; only the UI remains.** The chain and the learned layer are
-  packaged behind one API in `pipeline/hybrid.py` + `pipeline/simulator.py`
-  (`Scenario`/`Simulator`, six levers, route edits, an attribution guard), and
-  the notebook now delegates to the same code. The interactive front end on top
-  of `app/simulator.py` does not exist yet. Its market breakdown and
-  `seats_mult` lever must be withheld or labelled supply-side-only.
-- **Serve the ML layer.** Done for planning use: `Simulator().fit()` trains the
-  hybrid end to end and `market()`/`monthly()` score scenarios with the learned
-  capture; the remaining work is the UI that exposes it.
+- **Simulator is built.** The chain and the learned layer are packaged behind
+  one API in `pipeline/hybrid.py` + `pipeline/simulator.py`
+  (`Scenario`/`Simulator`, six global levers, seasonal shape/mix, route edits,
+  market suspension, an attribution guard), and the notebook delegates to the
+  same code. `app/simulator.py` is the interactive deliverable; its market
+  breakdown is explicitly labelled `supply-side-only` and paired with an
+  attribution range.
+- **Serve the ML layer.** Done: `Simulator().fit()` trains the hybrid end to end
+  and `market()`/`monthly()` score scenarios with the learned capture and ALOS.
 - **52 air-only origins** have no measured hotel capture rate. OpenSky data in
   `data/raw/opensky/` is intended to close this and is not yet consumed; it is
   pulled by `tools/fetch_opensky.py`, which spends credits and so has not been
@@ -308,6 +335,7 @@ in sign, small. Source-market public holidays are still not covered; see
 |---|---|
 | `README.md` | this file — submission overview, setup, how to run |
 | [`docs/METHODS.md`](docs/METHODS.md) | **start here** — methods, results, decision log, reproducibility |
+| [`docs/SUBMISSION_PACK.md`](docs/SUBMISSION_PACK.md) | deck outline, demo script, system diagram, planner playbook |
 | [`docs/competition-brief.md`](docs/competition-brief.md) | challenge framing (provided by the organisers) |
 
 The seven generated diagnostics reports (`market_link_test.md`,

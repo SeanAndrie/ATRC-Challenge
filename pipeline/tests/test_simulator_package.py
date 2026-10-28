@@ -12,9 +12,14 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from pipeline import hybrid as H  # noqa: E402
-from pipeline.simulator import RouteEdit, Scenario, Simulator  # noqa: E402
+from pipeline.simulator import (  # noqa: E402
+    RouteChange,
+    RouteEdit,
+    Scenario,
+    Simulator,
+)
 
-# This is the ninth diagnostic. Unlike the other eight it writes NO report:
+# This is the packaging diagnostic. Unlike the report generators it writes NO report:
 # it exists so the packaging of the simulator cannot silently drift from the
 # notebook model without a test failing. Runtime is dominated by the LightGBM
 # ensembles it builds (the full and competition windows, the learned-ALOS model,
@@ -149,6 +154,44 @@ def main():
     ), "market multiplier must not touch other markets"
     print("market_seats_mult immutable + scoped to its market ok")
 
+    # Seasonal shape is a post-hoc dial: an all-1.2 profile must scale both
+    # arrival and guest-night totals by exactly 1.2, and a zero profile must
+    # switch the year off without touching the fitted model.
+    base_nights = sim.monthly(Scenario()).GuestNightsHat.sum()
+    shaped = sim.monthly(Scenario(season_profile=(1.2,) * 12)).GuestNightsHat.sum()
+    assert abs(shaped / base_nights - 1.2) < 1e-9
+    assert sim.monthly(Scenario(season_profile=(0.0,) * 12)).GuestNightsHat.sum() == 0.0
+    print("season_profile scales the seasonal shape exactly")
+
+    # Seasonal market mix is pre-model and scoped to one market-month.
+    mm0, _ = sim._scenario_supply(Scenario())
+    mm1, _ = sim._scenario_supply(
+        Scenario(market_month_mult=(("CHINA", 1, 0.5),))
+    )
+    jan = mm0["month"] == 1
+    china = mm0["market"] == "CHINA"
+    assert abs(
+        mm1.loc[china & jan, "Total_Seats"].sum()
+        / mm0.loc[china & jan, "Total_Seats"].sum()
+        - 0.5
+    ) < 1e-9
+    assert abs(
+        mm1.loc[china & ~jan, "Total_Seats"].sum()
+        - mm0.loc[china & ~jan, "Total_Seats"].sum()
+    ) < 1e-6
+    print("market_month_mult scales only the requested market-month")
+
+    # A closed market is a structural zero in both paths: no seats, no
+    # arrivals, no guest nights. This is what makes route/market exits honest.
+    closed = Scenario(closed_markets=("CHINA",))
+    _raw_closed = sim._scenario_supply(closed)[1]
+    assert _raw_closed.loc[_raw_closed["market"] == "CHINA", "Total_Seats"].sum() == 0.0
+    chain_closed = sim.chain(closed)
+    assert chain_closed.loc[chain_closed["market"] == "CHINA", "NewArrivalHat"].sum() == 0.0
+    hyb_closed = sim.market(closed)
+    assert hyb_closed.loc[hyb_closed["market"] == "CHINA", "GuestNightsHat"].sum() == 0.0
+    print("closed_markets is a structural zero in chain and hybrid")
+
     # Route edits add supply for an existing market only, and the added seats
     # convert through the chain (where P2P -> New Arrivals is monotonic).
     edit = Scenario(routes=(RouteEdit("CHINA", "Chengdu", "Etihad", 4000.0, "2025-09"),))
@@ -164,6 +207,41 @@ def main():
     ), "RouteEdit must raise chain New Arrivals"
     print("RouteEdit adds supply + arrivals ok")
 
+    # A RouteChange scales (or closes) an existing route over a month range,
+    # before the market-month aggregation. A blank city/airline scopes it to the
+    # whole market, which is the easiest stable test.
+    change = Scenario(
+        route_changes=(RouteChange("CHINA", 0.5, "2025-09", "2025-09"),)
+    )
+    _change_raw = sim._scenario_supply(change)[1]
+    base_090 = _base_raw.loc[
+        (_base_raw.market == "CHINA") & (_base_raw.ym_str == "2025-09"),
+        "Total_Seats",
+    ].sum()
+    chg_090 = _change_raw.loc[
+        (_change_raw.market == "CHINA") & (_change_raw.ym_str == "2025-09"),
+        "Total_Seats",
+    ].sum()
+    assert abs(chg_090 / base_090 - 0.5) < 1e-9
+    other_090 = _change_raw.loc[
+        (_change_raw.market != "CHINA") & (_change_raw.ym_str == "2025-09"),
+        "Total_Seats",
+    ].sum()
+    other_base = _base_raw.loc[
+        (_base_raw.market != "CHINA") & (_base_raw.ym_str == "2025-09"),
+        "Total_Seats",
+    ].sum()
+    assert abs(other_090 - other_base) < 1e-6
+    closed_route = Scenario(
+        route_changes=(RouteChange("CHINA", 0.0, "2025-09", "2025-09"),)
+    )
+    chain_closed_route = sim.chain(closed_route)
+    closed_rows = (chain_closed_route.market == "CHINA") & (
+        chain_closed_route.ym_str == "2025-09"
+    )
+    assert chain_closed_route.loc[closed_rows, "NewArrivalHat"].sum() == 0.0
+    print("RouteChange scales/closes exactly the requested route-month")
+
     # Guards: bad markets, bad values, degenerate supply, post-horizon supply,
     # and unknown view filters must all fail loudly.
     bad_scenarios = [
@@ -172,6 +250,14 @@ def main():
         ("unknown market_seats_mult key", dict(market_seats_mult=(("NARNIA", 1.2),))),
         ("zero market_seats_mult", dict(market_seats_mult=(("CHINA", 0.0),))),
         ("zero seats_mult", dict(seats_mult=0.0)),
+        ("short season_profile", dict(season_profile=(1.0,) * 11)),
+        ("unknown closed market", dict(closed_markets=("NARNIA",))),
+        ("unknown market_month_mult market", dict(market_month_mult=(("NARNIA", 1, 0.5),))),
+        ("bad market_month_mult month", dict(market_month_mult=(("CHINA", 13, 0.5),))),
+        ("unknown RouteChange market", dict(route_changes=(RouteChange("NARNIA", 0.5, "2025-09"),))),
+        ("negative RouteChange multiplier", dict(route_changes=(RouteChange("CHINA", -0.1, "2025-09"),))),
+        ("reversed RouteChange range", dict(route_changes=(RouteChange("CHINA", 0.5, "2025-12", "2025-09"),))),
+        ("post-horizon RouteChange", dict(route_changes=(RouteChange("CHINA", 0.5, "2027-01"),))),
     ]
     for label, kw in bad_scenarios:
         try:
