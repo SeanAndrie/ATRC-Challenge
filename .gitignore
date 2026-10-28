@@ -39,3 +39,4 @@ notebooks/__marimo__/
 # ...except the fitted simulator, which makes the Streamlit app deployable from
 # a clean clone without the licensed raw pack (Simulator.load() is self-contained).
 !/outputs/models/
+docs/SUBMISSION_PACK.md
