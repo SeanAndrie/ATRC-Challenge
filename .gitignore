@@ -40,3 +40,4 @@ notebooks/__marimo__/
 # a clean clone without the licensed raw pack (Simulator.load() is self-contained).
 !/outputs/models/
 docs/SUBMISSION_PACK.md
+docs/SUBMISSION_PACK.md
