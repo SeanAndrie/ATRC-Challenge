@@ -940,8 +940,8 @@ the UI must not present market levels as measured; the aggregate views are the
 defaults for a reason.
 
 The Streamlit front end (`app/simulator.py`) is the interactive deliverable with
-five tabs (Scenario, By market & season, Which levers matter, Validation,
-Assumptions & limits), a decisions-first copy (`app/copy.py`), and a thin,
+six tabs (Scenario, By market & season, Which levers matter, Validation,
+New origin (proxy), Assumptions & limits), a decisions-first copy (`app/copy.py`), and a thin,
 headlessly-testable logic layer (`app/logic.py`). The model side is complete,
 deterministic (`deterministic=True`, fixed seeds, single thread) and
 fit-on-demand from the competition pack — predictions are identical to the
@@ -981,7 +981,7 @@ notebook), `pipeline/simulator.py` (`Scenario`/`Simulator` API for the app),
 ([`METHODS.md`](METHODS.md)), [`competition-brief.md`](competition-brief.md)
 (supplied by the organisers), and the seven generated reports in `outputs/`.
 
-**App:** `app/simulator.py` is the working Streamlit deliverable, with five tabs
+**App:** `app/simulator.py` is the working Streamlit deliverable, with six tabs
 (Scenario, By market & season, Which levers matter, Validation, Assumptions &
 limits), a pure logic layer (`app/logic.py`) and auditable copy
 (`app/copy.py`). It loads the tracked fitted artifact, scores scenarios through

@@ -194,8 +194,9 @@ That trains 15 LightGBM models, so it is not instant.
 Tabs: **Scenario** (levers, route edits, seasonal shape/mix, waterfall),
 **By market & season** (heatmap, attribution range, guests per seat),
 **Which levers matter** (a-priori + empirical Sobol), **Validation** (live final
-test window and last-year holdout, monthly and seasonal weighted error), and
-**Assumptions & limits**. The app loads
+test window and last-year holdout, monthly and seasonal weighted error),
+**New origin (proxy)** (parametric range estimate for countries not in the 33
+markets), and **Assumptions & limits**. The app loads
 the tracked fitted artifact if present, else fits once (~1 min). For a
 non-interactive smoke test use `.venv/bin/streamlit run app/simulator.py
 --server.headless true`.
