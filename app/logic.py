@@ -62,6 +62,86 @@ LEVER_HELP = {
     ),
 }
 
+BAD_PROXIES = {"CHINA", "CANADA", "UNITED STATES OF AMERICA", "RUSSIAN FEDERATION", "FRANCE"}
+
+
+def proxy_market_stats(panel, params, market):
+    """Average LF, P2P share, capture, ALOS for a proxy market (parametric)."""
+    market = str(market).strip().upper()
+    pm = panel[panel["market"].astype(str).str.upper() == market]
+    seats = pm["Total_Seats"].sum()
+    pax = pm["Total_PAX"].sum()
+    p2p = pm["Total_P2P"].sum()
+    lf = (pax / seats) if seats > 0 else float("nan")
+    p2p_share = (p2p / pax) if pax > 0 else float("nan")
+    cap = params.get("capture")
+    cap = float(cap.get(market)) if cap is not None and market in cap.index else float("nan")
+    alos = params.get("alos")
+    alos = float(alos.get(market)) if alos is not None and market in alos.index else float("nan")
+    return {"market": market, "lf": lf, "p2p_share": p2p_share, "capture": cap, "alos": alos}
+
+
+def proxy_estimate(seats_per_week, weeks, stats, season_mult=1.0):
+    """Order-of-magnitude guest nights via the parametric chain."""
+    if seats_per_week <= 0 or weeks <= 0:
+        return 0.0
+    lf = stats["lf"]
+    p2p_share = stats["p2p_share"]
+    capture = stats["capture"]
+    alos = stats["alos"]
+    if any(pd.isna([lf, p2p_share, capture, alos])):
+        return float("nan")
+    pax = seats_per_week * weeks * lf
+    p2p = pax * p2p_share
+    new_arr = p2p * capture
+    guest_nights = new_arr * alos * season_mult
+    return float(guest_nights)
+
+
+def proxy_range_estimates(panel, params, country_label, seats_per_week, weeks, proxies, season_mult=1.0):
+    rows = []
+    for m in proxies:
+        stats = proxy_market_stats(panel, params, m)
+        est = proxy_estimate(seats_per_week, weeks, stats, season_mult)
+        rows.append({
+            "proxy_market": stats["market"],
+            "load_factor": stats["lf"],
+            "p2p_share": stats["p2p_share"],
+            "capture": stats["capture"],
+            "alos": stats["alos"],
+            "guest_nights": est,
+            "flag_bad": stats["market"] in BAD_PROXIES,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty or df["guest_nights"].isna().all():
+        return df, {}
+    vals = df["guest_nights"].dropna()
+    g = params.get("global_capture")
+    ga = params.get("global_alos")
+    gcap = float(g) if g is not None else float("nan")
+    galos = float(ga) if ga is not None else float("nan")
+    global_est = float("nan")
+    if seats_per_week > 0 and weeks > 0 and not (pd.isna(gcap) or pd.isna(galos)):
+        lf_med = df["load_factor"].median()
+        p_med = df["p2p_share"].median()
+        if not (pd.isna(lf_med) or pd.isna(p_med)):
+            pax = seats_per_week * weeks * lf_med
+            p2p = pax * p_med
+            new_arr = p2p * gcap
+            global_est = float(new_arr * galos * season_mult)
+    summary = {
+        "country": (country_label or "").strip() or "New origin",
+        "min": float(vals.min()),
+        "max": float(vals.max()),
+        "median": float(vals.median()),
+        "mean": float(vals.mean()),
+        "global_est": global_est,
+        "weeks": int(weeks),
+        "seats_per_week": float(seats_per_week),
+    }
+    return df, summary
+
+
 METRIC_LABELS = {
     "GuestNightsHat": "Guest nights",
     "NewArrivalHat": "New arrivals (hotel guests)",

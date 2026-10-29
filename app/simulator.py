@@ -582,6 +582,65 @@ def _validation_tab() -> None:
         st.info("Press the button to run the validation.")
 
 
+def _proxy_tab() -> None:
+    st.subheader("New origin (proxy) — order of magnitude")
+    st.warning(
+        "**Proxy estimate only.** This does **not** use the trained hybrid model "
+        "and does **not** add a new market to the scenario engine. The result is "
+        "based on the parametric chain using an existing market as a stand-in. "
+        "Treat the range as the answer, not a single point."
+    )
+    sim = _SIM
+    panel = sim.panel
+    params = sim.params
+    markets = sorted(panel["market"].astype(str).unique())
+    col1, col2, col3 = st.columns(3)
+    country = col1.text_input("Country / origin label (for display only)", value="VIETNAM")
+    seats_pw = col2.number_input("Seats per week", min_value=1, max_value=500, value=14, step=1)
+    weeks = col3.number_input("Weeks of operation", min_value=1, max_value=52, value=52, step=1)
+    st.caption(
+        "Pick one or more proxy markets that are plausibly similar. Markets with "
+        "`capture > 1.0` (CHINA, CANADA, USA, RUSSIA, FRANCE) are highlighted as "
+        "especially poor stand-ins due to the known attribution defect."
+    )
+    default_proxies = ["INDIA", "EGYPT", "TURKEY"]
+    proxies = st.multiselect(
+        "Proxy markets",
+        markets,
+        default=[p for p in default_proxies if p in markets],
+        help="Use geography/visa similarity to guide your choice.",
+    )
+    if st.button("Compute proxy estimate"):
+        if not proxies:
+            st.error("Select at least one proxy market.")
+            return
+        df, summary = L.proxy_range_estimates(panel, params, country, float(seats_pw), int(weeks), proxies)
+        if not summary:
+            st.error("Could not compute a proxy estimate (missing ratios for selected proxies).")
+            return
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Min guest nights", f"{summary['min']:,.0f}")
+        c2.metric("Median guest nights", f"{summary['median']:,.0f}")
+        c3.metric("Max guest nights", f"{summary['max']:,.0f}")
+        c4.metric("Global fallback", f"{summary['global_est']:,.0f}" if summary['global_est'] == summary['global_est'] else "—")
+        st.info(
+            f"**{summary['country']} (proxy):** ~{summary['min']:,.0f}–{summary['max']:,.0f} "
+            f"guest nights over {summary['weeks']} weeks at {summary['seats_per_week']:.0f} seats/week. "
+            "The spread is due to which existing market you choose as a stand-in."
+        )
+        show = df.copy()
+        show["load_factor"] = show["load_factor"].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        show["p2p_share"] = show["p2p_share"].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        show["capture"] = show["capture"].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        show["alos"] = show["alos"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+        show["guest_nights"] = show["guest_nights"].map(lambda x: f"{x:,.0f}" if pd.notna(x) else "—")
+        st.dataframe(show[["proxy_market", "load_factor", "p2p_share", "capture", "alos", "guest_nights", "flag_bad"]], hide_index=True)
+        st.caption(
+            "Rows flagged `flag_bad=True` come from markets where `capture > 1.0` "
+            "(attribution defect) — use them cautiously or exclude them."
+        )
+
+
 def _assumptions_tab() -> None:
     st.markdown(C.ASSUMPTIONS)
 
@@ -680,8 +739,8 @@ base_chain_window = L.filter_window(base_chain, impact_window, route_start)
 
 st.info(_decision_summary(scen_window, base_window, impact_window, route_start))
 
-tab_scen, tab_mkt, tab_sens, tab_val, tab_about = st.tabs(
-    ["Scenario", "By market & season", "Which levers matter", "Validation", "Assumptions & limits"]
+tab_scen, tab_mkt, tab_sens, tab_val, tab_proxy, tab_about = st.tabs(
+    ["Scenario", "By market & season", "Which levers matter", "Validation", "New origin (proxy)", "Assumptions & limits"]
 )
 with tab_scen:
     _scenario_tab(
@@ -693,5 +752,7 @@ with tab_sens:
     _sensitivity_tab()
 with tab_val:
     _validation_tab()
+with tab_proxy:
+    _proxy_tab()
 with tab_about:
     _assumptions_tab()
